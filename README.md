@@ -259,13 +259,63 @@ The update script provides an automated way to update the rootfs on the target d
 ```
 
 **Interactive Process:**
+
+The update script will prompt for network configuration to establish TFTP communication:
+
+#### Step 1: Local IP Address Configuration
+```
+Enter local IP address with netmask (e.g., 169.254.35.110/16):
+```
+
+**What to enter:**
+- Format: `IP_ADDRESS/NETMASK_BITS`
+- Example: `169.254.35.123/16` 
+- Alternative: `192.168.1.100/24`
+
+**Why this is needed:**
+- Configures the embedded device's network interface (eth0)
+- Must be in same subnet as TFTP server for communication
+- `/16` netmask = `255.255.0.0` (allows 169.254.x.x range)
+- `/24` netmask = `255.255.255.0` (allows 192.168.1.x range)
+
+#### Step 2: TFTP Server IP Address
+```
+Enter TFTP server IP address (e.g., 169.254.87.46):
+```
+
+**What to enter:**
+- IP address of your development machine running TFTP server
+- Example: `169.254.87.46`
+- Alternative: `192.168.1.10`
+
+**Why this is needed:**
+- Target address for downloading `brsdk_standalone_arm.ext4.gz`
+- Must be reachable from the local IP configured in Step 1
+- TFTP server must be running and serving the image file
+
+#### Network Configuration Examples
+
+**Link-Local Setup (Recommended for direct connection):**
+```
+Local IP:     169.254.35.123/16
+TFTP Server:  169.254.87.46
+Network:      Direct Ethernet cable between devices
+```
+
+**LAN Setup (Development network):**
+```
+Local IP:     192.168.1.100/24  
+TFTP Server:  192.168.1.10
+Network:      Both devices on same LAN/switch
+```
+
 1. **Data Partition Setup**: Script formats `/dev/mmcblk0p7` as ext4 and mounts to `/data`
-2. **Network Configuration**: Enter local IP address (e.g., `169.254.35.110/16`)
-3. **TFTP Server**: Enter TFTP server IP address (e.g., `169.254.87.46`)
-4. **Image Download**: Script downloads `brsdk_standalone_arm.ext4.gz` via TFTP
-5. **Slot Detection**: Automatically detects active/inactive boot partitions
-6. **Image Installation**: Writes new rootfs to inactive partition
-7. **Boot Configuration**: Updates U-Boot environment for next boot
+2. **Network Configuration**: Enter IP addresses as described above
+3. **TFTP Download**: Script executes `tftp -b 50000 -g -r brsdk_standalone_arm.ext4.gz [SERVER_IP]`
+4. **Image Extraction**: Decompresses `.gz` file to `.ext4` format
+5. **Slot Detection**: Automatically detects active/inactive boot partitions (`mmcblk0p5` ↔ `mmcblk0p6`)
+6. **Image Installation**: Writes new rootfs to inactive partition using `dd`
+7. **Boot Configuration**: Updates U-Boot environment (`mmc_cur/mmc_bak`) for automatic failover
 
 **Prerequisites:**
 - TFTP server running with `brsdk_standalone_arm.ext4.gz` image
