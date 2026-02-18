@@ -1,0 +1,365 @@
+diff --git a/board/mscc/common/rootfs_overlay/etc/fw_env.config b/board/mscc/common/rootfs_overlay/etc/fw_env.config
+new file mode 100644
+index 0000000000000000000000000000000000000000..488ccc4c020ee8a76e182d43a550b31f74b402c7
+--- /dev/null
++++ b/board/mscc/common/rootfs_overlay/etc/fw_env.config
+@@ -0,0 +1,2 @@
++/dev/mtd0       0x00180000     0x00040000  0x00001000
++/dev/mtd0       0x001C0000     0x00040000  0x00001000
+\ No newline at end of file
+diff --git a/board/mscc/common/rootfs_overlay/etc/mosquitto/mosquitto.conf b/board/mscc/common/rootfs_overlay/etc/mosquitto/mosquitto.conf
+new file mode 100644
+index 0000000000000000000000000000000000000000..51422582f07ae3a59f1ccfe8951caf54c26e20e3
+--- /dev/null
++++ b/board/mscc/common/rootfs_overlay/etc/mosquitto/mosquitto.conf
+@@ -0,0 +1,7 @@
++pid_file /var/run/mosquitto.pid
++persistence true
++persistence_location /var/lib/mosquitto/
++log_dest stdout
++
++listener 1883 0.0.0.0
++allow_anonymous true
+diff --git a/board/mscc/common/rootfs_overlay/etc/network/interfaces b/board/mscc/common/rootfs_overlay/etc/network/interfaces
+new file mode 100644
+index 0000000000000000000000000000000000000000..a1d5ed0f3ace1129bf9cc59cc2398bfdcfb8edd8
+--- /dev/null
++++ b/board/mscc/common/rootfs_overlay/etc/network/interfaces
+@@ -0,0 +1,16 @@
++# Preconfigured network interfaces
++
++auto lo
++iface lo inet loopback
++
++auto eth0
++iface eth0 inet static
++    address 192.268.0.5
++    netmask 255.255.0.0
++
++auto eth1
++iface eth1 inet static
++    address 192.168.178.20
++    netmask 255.255.0.0
++
++# eth2 intentionally left unconfigured
+diff --git a/board/mscc/common/rootfs_overlay/sbin/update.sh b/board/mscc/common/rootfs_overlay/sbin/update.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..5bcec2f0fb804048ea793c98c443b58a522e601b
+--- /dev/null
++++ b/board/mscc/common/rootfs_overlay/sbin/update.sh
+@@ -0,0 +1,260 @@
++#!/bin/sh
++#
++# update_rootfs.sh
++#
++# Deployment Instructions:
++#  - Copy script to target: scp -O prog.sh root@IP_ADDRESS:/sbin/
++#  - Make executable: chmod 744 /sbin/prog.sh
++#  - Run on target: /sbin/prog.sh
++#
++# Process:
++#  1) Always format /dev/mmcblk0p7 as ext4 and mount to /data
++#  2) User: Copy image via scp to /data
++#  3) Extract image (/data/brsdk_standalone_arm.ext4.gz -> .ext4)
++#  4) Determine active root slot (p5 or p6)
++#  5) Write image to INACTIVE slot
++#  6) Set U-Boot-Env (mmc_cur/mmc_bak) to new slot
++
++set -e
++
++IMAGE_GZ="/data/brsdk_standalone_arm.ext4.gz"
++IMAGE="/data/brsdk_standalone_arm.ext4"
++DATA_DEV="/dev/mmcblk0p7"
++DATA_MNT="/data"
++
++echo "== Rootfs Update Script with /data Preparation =="
++
++# 1. Check if we are running as root
++if [ "$(id -u)" -ne 0 ]; then
++    echo "ERROR: Please run as root."
++    exit 1
++fi
++
++########################################
++# Step 1: Prepare data partition
++########################################
++echo "== Step 1: Prepare data partition =="
++
++# Ensure mountpoint exists
++if [ ! -d "$DATA_MNT" ]; then
++    echo "Mountpoint $DATA_MNT does not exist, creating it."
++    mkdir -p "$DATA_MNT"
++fi
++
++# If already mounted, unmount (we want to format)
++if mount | grep -q "$DATA_DEV"; then
++    echo "WARNING: $DATA_DEV is mounted, unmounting..."
++    umount "$DATA_DEV"
++fi
++
++echo "Formatting $DATA_DEV as ext4..."
++echo "WARNING: All data on $DATA_DEV will be deleted!"
++mkfs.ext4 -F "$DATA_DEV"
++
++echo "Mounting $DATA_DEV to $DATA_MNT..."
++mount "$DATA_DEV" "$DATA_MNT"
++
++echo "Data partition is ready:"
++df -h "$DATA_MNT"
++
++########################################
++# Step 2: Copy image via SCP
++########################################
++echo
++echo "== Step 2: Get Image via TFTP =="
++
++# Get IP addresses from user
++echo -n "Enter local IP address with netmask (e.g., 169.254.35.110/16): "
++read LOCAL_IP
++echo -n "Enter TFTP server IP address (e.g., 169.254.87.46): "
++read TFTP_SERVER_IP
++
++# Validate that IPs were entered
++if [ -z "$LOCAL_IP" ] || [ -z "$TFTP_SERVER_IP" ]; then
++    echo "ERROR: Both IP addresses must be entered."
++    exit 1
++fi
++
++echo "Using local IP: $LOCAL_IP"
++echo "Using TFTP server IP: $TFTP_SERVER_IP"
++
++ip addr flush dev eth0
++ip addr add $LOCAL_IP dev eth0
++tftp -b 50000 -g -r brsdk_standalone_arm.ext4.gz $TFTP_SERVER_IP -l /data/brsdk_standalone_arm.ext4.gz
++
++# Check if .gz file exists
++if [ ! -f "$IMAGE_GZ" ] && [ ! -f "$IMAGE" ]; then
++    echo "ERROR: Neither $IMAGE_GZ nor $IMAGE found."
++    echo "Make sure you copied the file brsdk_standalone_arm.ext4.gz to $DATA_MNT."
++    exit 1
++fi
++
++########################################
++# Step 3: Extract image
++########################################
++echo
++echo "== Step 3: Extract image =="
++
++if [ -f "$IMAGE_GZ" ]; then
++    echo "Extracting $IMAGE_GZ..."
++    gunzip -f "$IMAGE_GZ"
++fi
++
++if [ ! -f "$IMAGE" ]; then
++    echo "ERROR: Extracted image $IMAGE not found."
++    exit 1
++fi
++
++echo "Image found:"
++ls -lh "$IMAGE"
++
++########################################
++# Step 4: Determine inactive boot slot
++########################################
++echo
++echo "== Step 4: Determine inactive boot slot =="
++
++ROOTDEV="$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)"
++
++if [ -z "$ROOTDEV" ]; then
++    echo "ERROR: Could not find root= in /proc/cmdline."
++    exit 1
++fi
++
++echo "Current root device according to /proc/cmdline: $ROOTDEV"
++
++case "$ROOTDEV" in
++    /dev/mmcblk0p5)
++        ACTIVE_SLOT=5
++        INACTIVE_SLOT=6
++        ;;
++    /dev/mmcblk0p6)
++        ACTIVE_SLOT=6
++        INACTIVE_SLOT=5
++        ;;
++    *)
++        echo "ERROR: Unexpected root device: $ROOTDEV"
++        echo "This script only supports /dev/mmcblk0p5 or /dev/mmcblk0p6 as root."
++        exit 1
++        ;;
++esac
++
++echo "Active boot slot    : mmcblk0p${ACTIVE_SLOT}"
++echo "Inactive boot slot  : mmcblk0p${INACTIVE_SLOT}"
++
++TARGET_DEV="/dev/mmcblk0p${INACTIVE_SLOT}"
++
++# Make sure target slot is not mounted
++if mount | grep -q "$TARGET_DEV"; then
++    echo "Target partition $TARGET_DEV is mounted, trying to unmount..."
++    umount "$TARGET_DEV" || {
++        echo "ERROR: Could not unmount $TARGET_DEV."
++        exit 1
++    }
++fi
++
++########################################
++# Step 5: Write image to inactive slot
++########################################
++echo
++echo "== Step 5: Write image to $TARGET_DEV =="
++echo "This may take some time..."
++
++dd if="$IMAGE" of="$TARGET_DEV" bs=1M conv=fsync
++
++echo "Image has been written to $TARGET_DEV."
++
++
++########################################
++# Step 6: U-Boot instructions
++########################################
++echo
++echo "== Step 6: U-Boot instructions =="
++
++echo "The rootfs image has been written to the inactive slot:"
++echo "  New slot: /dev/mmcblk0p${INACTIVE_SLOT}"
++echo
++echo "To boot from this slot on next boot, please:"
++echo
++echo "1) Restart the board and stop U-Boot (e.g. with spacebar)."
++echo "2) Enter the following commands at the U-Boot prompt:"
++echo
++
++if [ "$INACTIVE_SLOT" -eq 5 ]; then
++    echo "  U-Boot> setenv mmc_cur 5"
++    echo "  U-Boot> setenv mmc_bak 6"
++else
++    echo "  U-Boot> setenv mmc_cur 6"
++    echo "  U-Boot> setenv mmc_bak 5"
++fi
++
++########################################
++# Step 7: Create fw_env.config
++########################################
++echo
++echo "== Step 7: Create /etc/fw_env.config =="
++echo
++echo "The file /etc/fw_env.config configures the U-Boot environment tools (fw_setenv/fw_printenv)"
++echo "for accessing the U-Boot environment in SPI flash."
++echo
++echo "Parameter explanation:"
++echo "  /dev/mtd0       = MTD device (SPI Flash)"
++echo "  0x00180000     = Primary environment offset (1.5MB)"
++echo "  0x001C0000     = Redundant environment offset (1.75MB)" 
++echo "  0x00040000     = Environment size (256KB)"
++echo "  0x00001000     = Sector size (4KB)"
++echo
++echo "The LAN9662 system uses redundant U-Boot environments for fail-safety."
++echo "Both areas contain the same boot parameters (mmc_cur, mmc_bak, etc.)"
++echo
++
++cat > /etc/fw_env.config << 'EOF'
++/dev/mtd0       0x00180000     0x00040000  0x00001000
++/dev/mtd0       0x001C0000     0x00040000  0x00001000
++EOF
++
++echo "File /etc/fw_env.config has been created:"
++cat /etc/fw_env.config
++echo
++echo "This configuration enables the fw_setenv/fw_printenv tools"
++echo "to read and write U-Boot variables directly from Linux."
++
++########################################
++# Step 8: Set U-Boot environment automatically
++########################################
++echo
++echo "== Step 8: Set U-Boot environment in SPI flash =="
++
++echo "Setting boot slots in U-Boot environment:"
++if [ "$INACTIVE_SLOT" -eq 5 ]; then
++    echo "  fw_setenv mmc_cur 5"
++    echo "  fw_setenv mmc_bak 6"
++    fw_setenv mmc_cur 5
++    fw_setenv mmc_bak 6
++else
++    echo "  fw_setenv mmc_cur 6"
++    echo "  fw_setenv mmc_bak 5"
++    fw_setenv mmc_cur 6
++    fw_setenv mmc_bak 5
++fi
++
++echo "U-Boot environment has been set automatically."
++echo "Next boot will start from slot ${INACTIVE_SLOT}."
++
++
++if [ "$INACTIVE_SLOT" -eq 5 ]; then
++    echo "  U-Boot> setenv mmc_cur 5"
++    echo "  U-Boot> setenv mmc_bak 6"
++else
++    echo "  U-Boot> setenv mmc_cur 6"
++    echo "  U-Boot> setenv mmc_bak 5"
++fi
++
++echo "  U-Boot> saveenv"
++echo "  U-Boot> boot"
++echo
++echo "Explanation:"
++echo "  mmc_cur = active boot slot (rootfs partition)"
++echo "  mmc_bak = backup slot for fallback"
++echo
++echo "== Finished. The system is ready for restart with the new image. =="
+diff --git a/external/configs/arm_standalone_defconfig b/external/configs/arm_standalone_defconfig
+index 50712c9361d08dab729555c49afe35e5ffababbc..1f2f0b10126547e4de63f3b2d56c70fff5e1d8c6 100644
+--- a/external/configs/arm_standalone_defconfig
++++ b/external/configs/arm_standalone_defconfig
+@@ -33,6 +33,7 @@ BR2_PACKAGE_LIBNET=y
+ BR2_PACKAGE_LIBUPNP=y
+ BR2_PACKAGE_DROPBEAR=y
+ BR2_PACKAGE_DROPBEAR_CLIENT=y
++BR2_PACKAGE_MOSQUITTO=y
+ BR2_PACKAGE_DHCP=y
+ BR2_PACKAGE_DHCP_CLIENT=y
+ BR2_PACKAGE_HIAWATHA=y
+@@ -53,6 +54,7 @@ BR2_TARGET_ROOTFS_SQUASHFS=y
+ BR2_TARGET_ROOTFS_SQUASHFS4_XZ=y
+ BR2_TARGET_GENERIC_HOSTNAME="vcoreiii"
+ BR2_TARGET_GENERIC_ISSUE="Welcome to SMBStaX"
++BR2_TARGET_GENERIC_ROOT_PASSWD="microchip"
+ 
+ BR2_ROOTFS_OVERLAY="board/mscc/common/rootfs_overlay"
+ 
+diff --git a/external/package/mscc-dts-overlays/0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch b/external/package/mscc-dts-overlays/0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch
+new file mode 100644
+index 0000000000000000000000000000000000000000..7bd0bdbb1597206bbe4d8745530d32245952e58b
+--- /dev/null
++++ b/external/package/mscc-dts-overlays/0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch
+@@ -0,0 +1,29 @@
++From 2d892f9ac5b0f0d2f19a4e8d76fceee1ad0e11f3 Mon Sep 17 00:00:00 2001
++From: Martin <martin@local>
++Date: Wed, 18 Feb 2026 12:00:00 +0000
++Subject: [PATCH] lan966x_pcb8291_lan8651: use GPIO36 for LAN8651 IRQ
++
++The 40-pin Raspberry Pi header adapter routes the LAN8651 interrupt line
++to header pin 31, which maps to GPIO36 on LAN9662.
++
++Switch IRQ from GPIO49 to GPIO36 for this adapter wiring.
++---
++ lan966x_pcb8291_lan8651.dtso | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/lan966x_pcb8291_lan8651.dtso b/lan966x_pcb8291_lan8651.dtso
++index 8f3f5a1..fd6dc53 100644
++--- a/lan966x_pcb8291_lan8651.dtso
+++++ b/lan966x_pcb8291_lan8651.dtso
++@@ -23,7 +23,7 @@
++                                 ethernet@0 {
++                                         compatible = "microchip,lan8651", "microchip,lan8650";
++                                         reg = <0>;
++                                         interrupt-parent = <&gpio>;
++-                                        interrupts = <49 IRQ_TYPE_EDGE_FALLING>;
+++                                        interrupts = <36 IRQ_TYPE_EDGE_FALLING>;
++                                         spi-max-frequency = <15000000>;
++                                 };
++                         };
++-- 
++2.43.0
