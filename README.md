@@ -2,7 +2,7 @@
 
 **BSP Version: 2025.12**
 
-This repository contains scripts and patches for building and customizing a Microchip BSP (Board Support Package) with LAN8651 Ethernet PHY support and AIoT (Artificial Intelligence of Things) customizations.
+This repository contains scripts and patches for building and customizing a Microchip BSP (Board Support Package) with LAN8651 Ethernet PHY support and AIoT Wedge customizations.
 
 ## Overview
 
@@ -11,11 +11,11 @@ The BSP Patcher automates the process of downloading, patching, and building a c
 ## Architecture
 
 ```
-┌─────────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
-│  Build Script       │    │  Patch File          │    │  Target Hardware    │
+┌─────────────────────┐     ┌──────────────────────┐    ┌─────────────────────┐
+│  Build Script       │     │  Patch File          │    │  Target Hardware    │
 │  build_with_        │───▶│  prebuild_lan8651_   │───▶│  LAN966x + LAN8651  │
-│  lan8651_patch.sh   │    │  customizations...   │    │  Embedded System    │
-└─────────────────────┘    └──────────────────────┘    └─────────────────────┘
+│  lan8651_patch.sh   │     │  customizations...   │    │  Embedded System    │
+└─────────────────────┘     └──────────────────────┘    └─────────────────────┘
 ```
 
 ## Files
