@@ -19,6 +19,7 @@ This repository contains scripts and patches for building and customizing a Micr
 - [Important Notes for BSP 2025.12](#important-notes-for-bsp-202512)
 - [Troubleshooting](#troubleshooting)
 - [Development Notes](#development-notes)
+- [Network Configuration](#network-configuration)
 - [Official Documentation](#official-documentation)
 - [License & Attribution](#license--attribution)
 - [Support](#support)
@@ -493,6 +494,64 @@ fdisk -l /dev/mmcblk0
 For additional hardware and overlay configuration details, refer to:
 - **BSP Documentation**: [LAN966x Overlays](https://microchip-ung.github.io/bsp-doc/bsp/2025.12/supported-hw/lan966x-overlays.html)
 - **Hardware Support**: [Microchip UNG BSP Documentation](https://microchip-ung.github.io/bsp-doc/)
+
+## Network Configuration
+
+### IP Forwarding without NAT (Layer 3 Routing)
+
+When implementing pure IP forwarding on Layer 3 instead of NAT, you need to consider the following requirements:
+
+#### 1. **Enable IP Forwarding**
+```bash
+# Temporarily
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# Permanently in /etc/sysctl.conf
+net.ipv4.ip_forward = 1
+```
+
+#### 2. **Configure Routing Tables**
+- Set up **static routes** on both sides of the router
+- Each network segment must know how to reach other segments
+- Example:
+```bash
+ip route add 192.168.2.0/24 via 192.168.1.1
+ip route add 192.168.1.0/24 via 192.168.2.1
+```
+
+#### 3. **Use Public IP Addresses**
+- All devices require **routable IP addresses** (no private RFC1918 addresses)
+- Or: Provider must have private networks in their routing tables
+
+#### 4. **Adjust Firewall Rules**
+```bash
+# Allow FORWARD chain (instead of MASQUERADE)
+iptables -A FORWARD -i eth0 -o eth1 -j ACCEPT
+iptables -A FORWARD -i eth1 -o eth0 -j ACCEPT
+```
+
+#### 5. **Configure Upstream Router**
+- The ISP/Gateway must know routes to your internal networks
+- Or: Set up BGP/OSPF for dynamic routing
+
+#### 6. **DNS and Services**
+- Internal services are directly reachable via their real IPs
+- No port-forwarding rules needed
+- DNS must be publicly resolvable if required
+
+#### **Key Difference from NAT:**
+- **With NAT**: One public IP for many private IPs
+- **With IP Forwarding**: Each IP is directly routable (requires more public IPs or special provider configuration)
+
+**Advantages:**
+- No address translation
+- More direct communication
+- Better end-to-end connectivity
+
+**Disadvantages:**
+- More IP addresses required
+- More complex routing configuration
+- Higher security requirements
 
 ## License & Attribution
 
