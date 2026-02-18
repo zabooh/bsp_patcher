@@ -60,6 +60,35 @@ The script will:
 ### Step 2: Patch Application
 The patch includes multiple customizations:
 
+**Files created by the patch:**
+```bash
+# View patch summary with:
+git apply --summary prebuild_lan8651_customizations_clean.patch
+
+ create mode 100644 board/mscc/common/rootfs_overlay/etc/fw_env.config
+ create mode 100644 board/mscc/common/rootfs_overlay/etc/mosquitto/mosquitto.conf
+ create mode 100644 board/mscc/common/rootfs_overlay/etc/network/interfaces
+ create mode 100755 board/mscc/common/rootfs_overlay/sbin/update.sh
+ create mode 100644 external/package/mscc-dts-overlays/0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch
+```
+
+**Complete patch statistics (including modifications):**
+```bash
+# View which lines are added/removed:
+git apply --numstat prebuild_lan8651_customizations_clean.patch
+
+2       0       board/mscc/common/rootfs_overlay/etc/fw_env.config
+7       0       board/mscc/common/rootfs_overlay/etc/mosquitto/mosquitto.conf
+16      0       board/mscc/common/rootfs_overlay/etc/network/interfaces
+260     0       board/mscc/common/rootfs_overlay/sbin/update.sh
+2       0       external/configs/arm_standalone_defconfig
+11      0       external/package/mscc-dts-overlays/0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch
+```
+
+**Important:** Notice that `external/configs/arm_standalone_defconfig` is **modified** (not created), showing that the patch also changes existing build configuration files.
+
+**Note**: The patch automatically includes the GPIO fix (`0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch`) needed for AIoT Wedge hardware compatibility with BSP 2025.12.
+
 #### Network Configuration
 - **eth0**: Static IP `192.268.0.5/16` (AIoT network segment)
 - **eth1**: Static IP `192.168.178.20/16` (Management network)
