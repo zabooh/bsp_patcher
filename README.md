@@ -290,6 +290,29 @@ interrupts = <49 IRQ_TYPE_EDGE_FALLING>;
 
 **L3 Routing Alternative**: While L2 bridging is not possible, **L3 forwarding (IP routing)** between the interfaces **is possible** and can provide inter-network connectivity:
 
+**Required Kernel Configuration:**
+```bash
+# Essential kernel options for iptables NAT and connection tracking:
+CONFIG_NETFILTER=y
+CONFIG_NETFILTER_ADVANCED=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_CONNTRACK_IPV4=y
+CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
+CONFIG_NETFILTER_XT_MATCH_STATE=y
+CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
+CONFIG_IP_NF_IPTABLES=y
+CONFIG_IP_NF_NAT=y
+CONFIG_IP_NF_TARGET_MASQUERADE=y
+CONFIG_IP_NF_FILTER=y
+CONFIG_IP_ADVANCED_ROUTER=y
+CONFIG_IP_MULTIPLE_TABLES=y
+
+# Check current kernel support:
+grep -E "(NETFILTER|NF_|IP_NF_)" /boot/config-$(uname -r) || \
+zcat /proc/config.gz | grep -E "(NETFILTER|NF_|IP_NF_)"
+```
+
+**Runtime Configuration:**
 ```bash
 # Enable IP forwarding on the system
 echo 1 > /proc/sys/net/ipv4/ip_forward
