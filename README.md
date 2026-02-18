@@ -225,12 +225,21 @@ saveenv
 After successful build completion:
 ```
 ./mchp-brsdk-source-2025.12/output/mybuild/images/
-├── rootfs.squashfs          # Root filesystem
-├── rootfs.tar               # Root filesystem archive  
-├── u-boot.bin              # U-Boot bootloader
-├── zImage                  # Linux kernel
-└── *.dtb                   # Device tree binaries
+├── brsdk_standalone_arm.ext4.gz  # **MAIN TARGET** - Compressed rootfs image for TFTP deployment
+├── rootfs.squashfs               # Root filesystem (SquashFS format)
+├── rootfs.tar                    # Root filesystem archive  
+├── u-boot.bin                    # U-Boot bootloader
+├── zImage                        # Linux kernel
+└── *.dtb                         # Device tree binaries
 ```
+
+### Key Output File Details
+
+- **`brsdk_standalone_arm.ext4.gz`** - This is the **primary deployment image**
+  - Contains complete customized rootfs with LAN8651 support
+  - Compressed EXT4 filesystem ready for TFTP deployment
+  - Includes all patch customizations (MQTT, network config, root password)
+  - Used by embedded device for rootfs updates via `/sbin/update.sh`
 
 ## Update Procedure
 
