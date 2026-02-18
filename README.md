@@ -87,6 +87,9 @@ Mosquitto MQTT broker with:
 ### 1. Network Interface Setup
 Location: `board/mscc/common/rootfs_overlay/etc/network/interfaces`
 
+![Network Interface Configuration](interfaces.jpg)
+*Network interface configuration showing the static IP assignments for eth0 (AIoT network) and eth1 (Management network)*
+
 ```ini
 auto eth0
 iface eth0 inet static
