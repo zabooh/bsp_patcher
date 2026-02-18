@@ -4,6 +4,25 @@
 
 This repository contains scripts and patches for building and customizing a Microchip BSP (Board Support Package) with LAN8651 Ethernet PHY support and AIoT Wedge customizations.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Files](#files)
+- [Quick Start](#quick-start)
+- [Build Process Details](#build-process-details)
+- [Customizations in Detail](#customizations-in-detail)
+- [Hardware Configuration](#hardware-configuration)
+- [Build Output](#build-output)
+- [Update Procedure](#update-procedure)
+- [Manual Board Programming](#manual-board-programming)
+- [Important Notes for BSP 2025.12](#important-notes-for-bsp-202512)
+- [Troubleshooting](#troubleshooting)
+- [Development Notes](#development-notes)
+- [Official Documentation](#official-documentation)
+- [License & Attribution](#license--attribution)
+- [Support](#support)
+
 ## Overview
 
 The BSP Patcher automates the process of downloading, patching, and building a customized version of the Microchip BSP with specific network configurations, MQTT support, and update mechanisms tailored for embedded AIoT applications.
@@ -256,6 +275,32 @@ boot                # Continue boot
 # Or Linux prombt
 fw_setenv pcb lan9662_ung8291_0_at_lan966x#lan9662_ung8291_lan8651_0_at_lan966x
 
+```
+
+## Manual Board Programming
+
+### Programming LAN9662 Board
+
+**Enter U-Boot Mode during startup**
+
+**Set up network and download firmware:**
+```bash
+setenv ipaddr 169.254.35.123
+setenv netmask 255.255.0.0
+tftp 169.254.87.46:brsdk_standalone_arm.ext4.gz
+unzip ${loadaddr} ${mmc_unzip_loadaddr}
+run mmc_format
+run mmc_boot0_upd; run mmc_boot1_upd
+boot
+```
+
+**Configure PLCA during runtime:**
+```bash
+ethtool --set-plca-cfg eth2 enable on node-id 0 node-cnt 8
+ethtool --get-plca-cfg eth2
+ip addr add dev eth2 192.168.10.11/24
+ip link set eth2 up
+ifconfig
 ```
 
 ## Important Notes for BSP 2025.12
