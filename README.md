@@ -217,7 +217,7 @@ After successful build completion:
 
 ### Development Workflow
 1. Build new image using this patcher
-2. Extract `rootfs.ext4.gz` from build output
+2. Copy image `brsdk_standalone_arm.ext4.gz` from build output to TFTP server
 3. Set up TFTP server with the image
 4. Run update script on target device
 
@@ -252,6 +252,10 @@ The following U-Boot variable must be set to enable LAN8651 overlay support:
 setenv pcb lan9662_ung8291_0_at_lan966x#lan9662_ung8291_lan8651_0_at_lan966x
 saveenv             # Save configuration
 boot                # Continue boot
+
+# Or Linux prombt
+fw_setenv pcb lan9662_ung8291_0_at_lan966x#lan9662_ung8291_lan8651_0_at_lan966x
+
 ```
 
 ## Important Notes for BSP 2025.12
@@ -279,12 +283,35 @@ interrupts = <49 IRQ_TYPE_EDGE_FALLING>;
 
 ### 3. Bridge Functionality Limitation
 
-**Limitation**: According to documentation, a bridge between LAN8651 (eth0) and eth1/eth2 **does not work** in this BSP release. This is because:
+**L2 Bridging Limitation**: According to documentation, a bridge between LAN8651 (eth0) and eth1/eth2 **does not work** in this BSP release. This is because:
 
 - The LAN8651 operates over a **separate SPI-MACPHY data path**
 - Common L2 forwarding to the LAN966x switch ports is **currently not implemented** for this configuration
 
-**Recommendation**: Design your network architecture with this limitation in mind - treat the LAN8651 interface (eth0) as an independent network segment.
+**L3 Routing Alternative**: While L2 bridging is not possible, **L3 forwarding (IP routing)** between the interfaces **is possible** and can provide inter-network connectivity:
+
+```bash
+# Enable IP forwarding on the system
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# Add routing rules between networks
+# Route AIoT network (192.268.0.0/16) via Management network (192.168.178.0/16)
+ip route add 192.268.0.0/16 via 192.168.178.1 dev eth1
+ip route add 192.168.178.0/16 via 192.268.0.1 dev eth0
+
+# Optional: NAT for internet access via eth1
+iptables -t nat -A POSTROUTING -s 192.268.0.0/16 -o eth1 -j MASQUERADE
+iptables -A FORWARD -i eth0 -o eth1 -j ACCEPT
+iptables -A FORWARD -i eth1 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+```
+
+**Use Cases for L3 Routing:**
+- **Inter-network communication**: AIoT devices on eth0 can communicate with management systems on eth1
+- **Internet gateway**: Route AIoT traffic through management network to external networks
+- **Firewall capabilities**: Control traffic flow between networks using iptables rules
+- **Network segmentation**: Maintain separate broadcast domains while allowing controlled routing
+
+**Recommendation**: Design your network architecture using L3 routing between eth0 (LAN8651) and eth1/eth2 (LAN966x switch ports) instead of L2 bridging.
 
 ## Troubleshooting
 
