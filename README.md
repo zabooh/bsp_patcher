@@ -1,5 +1,7 @@
 # LAN8651 BSP Patcher
 
+**BSP Version: 2025.12**
+
 This repository contains scripts and patches for building and customizing a Microchip BSP (Board Support Package) with LAN8651 Ethernet PHY support and AIoT (Artificial Intelligence of Things) customizations.
 
 ## Overview
@@ -133,12 +135,29 @@ Comprehensive A/B partition update system:
 - **SoC**: Microchip LAN966x series
 - **PHY**: LAN8651 (10BASE-T1L Ethernet PHY)
 - **Board**: PCB8291 or compatible
-- **Interface**: 40-pin adapter connection
+- **Interface**: 40-pin adapter connection via Raspberry Pi Hat
+- **Performance**: 10Mbps/Half duplex operation
+
+### Hardware Connection
+The LAN8651 setup uses a stacked configuration:
+1. **Base Board**: LAN966x PCB8291 with PIN header
+2. **Adapter**: [Raspberry Pi Hat adapter](https://www.mouser.dk/ProductDetail/932-MIKROE-1513)
+3. **PHY Board**: [LAN8651 PHY module](https://www.mouser.dk/ProductDetail/932-MIKROE-5543)
 
 ### LAN8651 PHY Settings
 - **SPI Interface**: Up to 15MHz
 - **Interrupt**: GPIO36 (falling edge)
 - **Protocol**: 10BASE-T1L (10 Mbps over single pair)
+- **Network Interface**: eth0 (LAN8651 PHY)
+- **Link Status**: "Link is Up - 10Mbps/Half - flow control off"
+
+### U-Boot Overlay Configuration
+The LAN8651 overlay requires U-Boot environment setup:
+```bash
+# Set PCB configuration for LAN8651 overlay support
+setenv pcb lan9662_ung8291_0_at_lan966x#lan9662_ung8291_lan8651_0_at_lan966x
+saveenv
+```
 
 ## Build Output
 
@@ -161,22 +180,34 @@ After successful build completion:
 4. Run update script on target device
 
 ### Target Device Update
-```bash
-# On the embedded device
-/sbin/update.sh
 
-# Follow prompts for:
-# - Local IP configuration
-# - TFTP server IP
-# - Automatic image download and installation
+The update script provides an automated way to update the rootfs on the target device:
+
+```bash
+# On the embedded device, run as root
+/sbin/update.sh
 ```
 
+**Interactive Process:**
+1. **Data Partition Setup**: Script formats `/dev/mmcblk0p7` as ext4 and mounts to `/data`
+2. **Network Configuration**: Enter local IP address (e.g., `169.254.35.110/16`)
+3. **TFTP Server**: Enter TFTP server IP address (e.g., `169.254.87.46`)
+4. **Image Download**: Script downloads `brsdk_standalone_arm.ext4.gz` via TFTP
+5. **Slot Detection**: Automatically detects active/inactive boot partitions
+6. **Image Installation**: Writes new rootfs to inactive partition
+7. **Boot Configuration**: Updates U-Boot environment for next boot
+
+**Prerequisites:**
+- TFTP server running with `brsdk_standalone_arm.ext4.gz` image
+- Network connectivity between device and TFTP server
+- Root access on target device
+
 ### Manual U-Boot Configuration
+The following U-Boot variable must be set to enable LAN8651 overlay support:
+
 ```bash
-# Stop U-Boot during boot
 # At U-Boot prompt:
-setenv mmc_cur 6    # Switch to partition 6
-setenv mmc_bak 5    # Set partition 5 as backup
+setenv pcb lan9662_ung8291_0_at_lan966x#lan9662_ung8291_lan8651_0_at_lan966x
 saveenv             # Save configuration
 boot                # Continue boot
 ```
@@ -193,6 +224,8 @@ boot                # Continue boot
 #### Network Configuration
 - **IP conflicts**: Verify network segments don't conflict with existing infrastructure
 - **AIoT connectivity**: Ensure 192.268.0.x subnet is routed properly
+- **Interface bridging**: eth0 (LAN8651) cannot be bridged with eth1/eth2 interfaces
+- **Traffic forwarding**: LAN8651 traffic does not forward to other Ethernet interfaces
 
 #### Update Problems
 - **TFTP timeout**: Verify server accessibility and file presence
@@ -226,6 +259,12 @@ fdisk -l /dev/mmcblk0
 1. Modify the patch file with new configurations
 2. Test patch application: `git apply --check prebuild_lan8651_customizations_clean.patch`
 3. Rebuild using the main script
+
+## Official Documentation
+
+For additional hardware and overlay configuration details, refer to:
+- **BSP Documentation**: [LAN966x Overlays](https://microchip-ung.github.io/bsp-doc/bsp/2025.12/supported-hw/lan966x-overlays.html)
+- **Hardware Support**: [Microchip UNG BSP Documentation](https://microchip-ung.github.io/bsp-doc/)
 
 ## License & Attribution
 
