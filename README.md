@@ -130,7 +130,17 @@ Comprehensive A/B partition update system:
 - Web server: Hiawatha
 
 ## Hardware Configuration
+### Required Hardware Setup for BSP 2025.12
 
+![Hardware Setup BSP 2025.12](hardware_setup_2025.12.jpg)
+*Figure 1: Required hardware configuration for BSP 2025.12 - Base board with MIKROE-1513 adapter and LAN8651 PHY module*
+
+### AIoT Wedge Hardware Configuration
+
+![AIoT Wedge Hardware](aiot_wedge_hardware.jpg)
+*Figure 2: AIoT Wedge hardware configuration showing the actual setup used - Note the different adapter configuration compared to BSP 2025.12 requirements*
+
+**Important Difference**: The AIoT Wedge uses the MIKROE-1879 configuration where the INT line connects to **pin 31** (GPIO36), while BSP 2025.12 expects MIKROE-1513 with INT line on **pin 11** (GPIO49). This requires the patch file `0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch` to be applied.
 ### Target Platform
 - **SoC**: Microchip LAN966x series
 - **PHY**: LAN8651 (10BASE-T1L Ethernet PHY)
@@ -211,6 +221,38 @@ setenv pcb lan9662_ung8291_0_at_lan966x#lan9662_ung8291_lan8651_0_at_lan966x
 saveenv             # Save configuration
 boot                # Continue boot
 ```
+
+## Important Notes for BSP 2025.12
+
+### 1. INT Pin Configuration Issue - Different Raspberry Pi Adapter Board
+
+In BSP 2025.12, a different Raspberry Pi adapter (MIKROE-1513) is used compared to the one on the AIoT Wedge. The key difference is that the INT line of the LAN8651 connects to **pin 11** instead of **pin 31** of the header.
+
+**Issue**: To make BSP 2025.12 work with MIKROE-1879, the GPIO configuration in the DTS overlay for the LAN8651 must be changed from GPIO36 to GPIO49:
+
+```dts
+# Change from:
+interrupts = <36 IRQ_TYPE_EDGE_FALLING>;
+# to:
+interrupts = <49 IRQ_TYPE_EDGE_FALLING>;
+```
+
+**Solution**: Copy the patch file `0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch` to `external/package/` before the first build run.
+
+### 2. Network Interface Naming Convention
+
+**Important**: According to official documentation, the LAN8651 should/must remain as **eth0** because the BSP documents, tests, and supports it exactly this way via overlay configuration. Renaming it would introduce additional risks without functional benefits. The modification to revert to the 2024.09 state is very complex and should be avoided.
+
+**Impact**: This has the consequence that all interface assignments are rotated/shifted compared to previous expectations.
+
+### 3. Bridge Functionality Limitation
+
+**Limitation**: According to documentation, a bridge between LAN8651 (eth0) and eth1/eth2 **does not work** in this BSP release. This is because:
+
+- The LAN8651 operates over a **separate SPI-MACPHY data path**
+- Common L2 forwarding to the LAN966x switch ports is **currently not implemented** for this configuration
+
+**Recommendation**: Design your network architecture with this limitation in mind - treat the LAN8651 interface (eth0) as an independent network segment.
 
 ## Troubleshooting
 
