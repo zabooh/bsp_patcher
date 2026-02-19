@@ -108,27 +108,46 @@ index 0000000000000000000000000000000000000000..5bcec2f0fb804048ea793c98c443b58a
 +df -h "$DATA_MNT"
 +
 +########################################
-+# Step 2: Copy image via SCP
++# Step 2: Copy image via TFTP
 +########################################
 +echo
 +echo "== Step 2: Get Image via TFTP =="
 +
-+# Get IP addresses from user
-+echo -n "Enter local IP address with netmask (e.g., 169.254.35.110/16): "
-+read LOCAL_IP
-+echo -n "Enter TFTP server IP address (e.g., 169.254.87.46): "
-+read TFTP_SERVER_IP
++# Set inteface to use for TFTP (eth0, eth1, or eth2)
++DEFAULT_INTERFACE="eth1"
++echo -n "Use interface (default: $DEFAULT_INTERFACE): "
++read USE_ETHX
++# Use default if nothing entered
++if [ -z "$USE_ETHX" ]; then
++    USE_ETHX="$DEFAULT_INTERFACE"
++fi
 +
-+# Validate that IPs were entered
-+if [ -z "$LOCAL_IP" ] || [ -z "$TFTP_SERVER_IP" ]; then
-+    echo "ERROR: Both IP addresses must be entered."
++# Get IP addresses from user
++DEFAULT_LOCAL_IP="169.254.35.110/16"
++echo -n "Enter local IP address with netmask (e.g., $DEFAULT_LOCAL_IP): "
++read LOCAL_IP
++# Use default if nothing entered
++if [ -z "$LOCAL_IP" ]; then
++    LOCAL_IP="$DEFAULT_LOCAL_IP"
++fi
++
++DEFAULT_SERVER_IP="169.254.87.46"
++echo -n "Enter TFTP server IP address (e.g., $DEFAULT_SERVER_IP): "
++read TFTP_SERVER_IP
++# Use default if nothing entered
++if [ -z "$TFTP_SERVER_IP" ]; then
++    TFTP_SERVER_IP="$DEFAULT_SERVER_IP"
++fi
++
++# Validate that TFTP server IP was entered
++if [ -z "$TFTP_SERVER_IP" ]; then
++    echo "ERROR: TFTP server IP address must be entered."
 +    exit 1
 +fi
 +
++echo "Using interface: $USE_ETHX"
 +echo "Using local IP: $LOCAL_IP"
 +echo "Using TFTP server IP: $TFTP_SERVER_IP"
-+echo -n "Use interface: "
-+read USE_ETHX
 +
 +ip link set eth0 down
 +ip link set eth1 down
