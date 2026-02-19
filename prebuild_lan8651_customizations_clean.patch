@@ -33,7 +33,7 @@ index 0000000000000000000000000000000000000000..a1d5ed0f3ace1129bf9cc59cc2398bfd
 +
 +auto eth0
 +iface eth0 inet static
-+    address 192.268.0.5
++    address 192.168.0.5
 +    netmask 255.255.0.0
 +
 +auto eth1
@@ -127,9 +127,17 @@ index 0000000000000000000000000000000000000000..5bcec2f0fb804048ea793c98c443b58a
 +
 +echo "Using local IP: $LOCAL_IP"
 +echo "Using TFTP server IP: $TFTP_SERVER_IP"
++echo -n "Use interface: "
++read USE_ETHX
 +
-+ip addr flush dev eth0
-+ip addr add $LOCAL_IP dev eth0
++ip link set eth0 down
++ip link set eth1 down
++ip link set eth2 down
++
++ip addr flush dev $USE_ETHX
++ip addr add $LOCAL_IP dev $USE_ETHX
++ip link set $USE_ETHX up
++
 +tftp -b 50000 -g -r brsdk_standalone_arm.ext4.gz $TFTP_SERVER_IP -l /data/brsdk_standalone_arm.ext4.gz
 +
 +# Check if .gz file exists
