@@ -337,11 +337,11 @@ index 0000000000000000000000000000000000000000..7bd0bdbb1597206bbe4d8745530d3224
 +--- a/lan966x_pcb8291_lan8651.dtso
 ++++ b/lan966x_pcb8291_lan8651.dtso
 +@@ -25,7 +25,7 @@
-+                                      compatible = "microchip,lan8651", "microchip,lan8650";
-+                                      reg = <0>;
-+                                      interrupt-parent = <&gpio>;
-+-                                     interrupts = <49 IRQ_TYPE_EDGE_FALLING>;
-++                                     interrupts = <36 IRQ_TYPE_EDGE_FALLING>;
-+                                      spi-max-frequency = <15000000>;
-+                              };
-+                      };
++ 					compatible = "microchip,lan8651", "microchip,lan8650";
++ 					reg = <0>;
++ 					interrupt-parent = <&gpio>;
++-					interrupts = <49 IRQ_TYPE_EDGE_FALLING>;
+++					interrupts = <36 IRQ_TYPE_EDGE_FALLING>;
++ 					spi-max-frequency = <15000000>;
++ 				};
++ 			};
