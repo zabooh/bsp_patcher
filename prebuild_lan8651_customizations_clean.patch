@@ -342,15 +342,16 @@ diff --git a/external/configs/arm_standalone_defconfig b/external/configs/arm_st
 index 50712c9361d08dab729555c49afe35e5ffababbc..1f2f0b10126547e4de63f3b2d56c70fff5e1d8c6 100644
 --- a/external/configs/arm_standalone_defconfig
 +++ b/external/configs/arm_standalone_defconfig
-@@ -33,6 +33,7 @@ BR2_PACKAGE_LIBNET=y
+@@ -33,6 +33,8 @@ BR2_PACKAGE_LIBNET=y
  BR2_PACKAGE_LIBUPNP=y
  BR2_PACKAGE_DROPBEAR=y
  BR2_PACKAGE_DROPBEAR_CLIENT=y
 +BR2_PACKAGE_MOSQUITTO=y
++BR2_PACKAGE_LAN8651_KERNEL_CONFIG=y
  BR2_PACKAGE_DHCP=y
  BR2_PACKAGE_DHCP_CLIENT=y
  BR2_PACKAGE_HIAWATHA=y
-@@ -53,6 +54,7 @@ BR2_TARGET_ROOTFS_SQUASHFS=y
+@@ -53,6 +55,7 @@ BR2_TARGET_ROOTFS_SQUASHFS=y
  BR2_TARGET_ROOTFS_SQUASHFS4_XZ=y
  BR2_TARGET_GENERIC_HOSTNAME="vcoreiii"
  BR2_TARGET_GENERIC_ISSUE="Welcome to SMBStaX"
@@ -375,3 +376,56 @@ index 0000000000000000000000000000000000000000..7bd0bdbb1597206bbe4d8745530d3224
 + 					spi-max-frequency = <15000000>;
 + 				};
 + 			};
+
+diff --git a/package/lan8651-kernel-config/Config.in b/package/lan8651-kernel-config/Config.in
+new file mode 100644
+index 0000000000000000000000000000000000000000..fedcba0987654321fedcba0987654321fedcba09
+--- /dev/null
++++ b/package/lan8651-kernel-config/Config.in
+@@ -0,0 +1,6 @@
++config BR2_PACKAGE_LAN8651_KERNEL_CONFIG
++	bool "lan8651-kernel-config"
++	help
++	  Enables LAN8651 T1S PHY support in kernel configuration
++	  by setting CONFIG_MICROCHIP_T1S_PHY=y after kernel extract.
++
+
+diff --git a/package/lan8651-kernel-config/lan8651-kernel-config.mk b/package/lan8651-kernel-config/lan8651-kernel-config.mk
+new file mode 100644
+index 0000000000000000000000000000000000000000..abcdef1234567890abcdef1234567890abcdef12
+--- /dev/null
++++ b/package/lan8651-kernel-config/lan8651-kernel-config.mk
+@@ -0,0 +1,19 @@
++################################################################################
++#
++# lan8651-kernel-config
++#
++################################################################################
++
++LAN8651_KERNEL_CONFIG_VERSION = 1.0
++LAN8651_KERNEL_CONFIG_LICENSE = GPL-2.0
++
++# Hook to modify kernel config after extraction
++define LAN8651_KERNEL_CONFIG_HOOK
++	@echo "=== LAN8651: Setting CONFIG_MICROCHIP_T1S_PHY=y in kernel config ==="
++	$(SED) 's/^# CONFIG_MICROCHIP_T1S_PHY is not set$$/CONFIG_MICROCHIP_T1S_PHY=y/' \
++		$(LINUX_DIR)/.config || \
++	echo "CONFIG_MICROCHIP_T1S_PHY=y" >> $(LINUX_DIR)/.config
++endef
++
++LINUX_POST_EXTRACT_HOOKS += LAN8651_KERNEL_CONFIG_HOOK
++
++$(eval $(generic-package))
+
+
+diff --git a/package/Config.in b/package/Config.in
+index abcdef1234567890abcdef1234567890abcdef12..fedcba0987654321fedcba0987654321fedcba09 100644
+--- a/package/Config.in
++++ b/package/Config.in
+@@ -2842,3 +2842,4 @@
+	source "package/kmon/Config.in"
+	source "package/kvmtool/Config.in"
++	source "package/lan8651-kernel-config/Config.in"
+	source "package/libostree/Config.in"
+
+
