@@ -20,6 +20,7 @@ index 0000000000000000000000000000000000000000..51422582f07ae3a59f1ccfe8951caf54
 +
 +listener 1883 0.0.0.0
 +allow_anonymous true
+
 diff --git a/board/mscc/common/rootfs_overlay/etc/network/interfaces b/board/mscc/common/rootfs_overlay/etc/network/interfaces
 new file mode 100644
 index 0000000000000000000000000000000000000000..a1d5ed0f3ace1129bf9cc59cc2398bfdcfb8edd8
@@ -42,12 +43,13 @@ index 0000000000000000000000000000000000000000..a1d5ed0f3ace1129bf9cc59cc2398bfd
 +    netmask 255.255.0.0
 +
 +# eth2 intentionally left unconfigured
+
 diff --git a/board/mscc/common/rootfs_overlay/sbin/update.sh b/board/mscc/common/rootfs_overlay/sbin/update.sh
 new file mode 100755
 index 0000000000000000000000000000000000000000..5bcec2f0fb804048ea793c98c443b58a522e601b
 --- /dev/null
 +++ b/board/mscc/common/rootfs_overlay/sbin/update.sh
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,287 @@
 +#!/bin/sh
 +#
 +# update_rootfs.sh
@@ -335,6 +337,7 @@ index 0000000000000000000000000000000000000000..5bcec2f0fb804048ea793c98c443b58a
 +echo "  mmc_bak = backup slot for fallback"
 +echo
 +echo "== Finished. The system is ready for restart with the new image. =="
+
 diff --git a/external/configs/arm_standalone_defconfig b/external/configs/arm_standalone_defconfig
 index 50712c9361d08dab729555c49afe35e5ffababbc..1f2f0b10126547e4de63f3b2d56c70fff5e1d8c6 100644
 --- a/external/configs/arm_standalone_defconfig
