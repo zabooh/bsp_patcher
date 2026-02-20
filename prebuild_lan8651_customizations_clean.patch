@@ -13,13 +13,13 @@ index 0000000000000000000000000000000000000000..51422582f07ae3a59f1ccfe8951caf54
 --- /dev/null
 +++ b/board/mscc/common/rootfs_overlay/etc/mosquitto/mosquitto.conf
 @@ -0,0 +1,7 @@
-+pid_file /var/run/mosquitto.pid
-+persistence true
-+persistence_location /var/lib/mosquitto/
-+log_dest stdout
-+
 +listener 1883 0.0.0.0
 +allow_anonymous true
++
++persistence false
++log_dest stdout
++
++
 
 diff --git a/board/mscc/common/rootfs_overlay/etc/network/interfaces b/board/mscc/common/rootfs_overlay/etc/network/interfaces
 new file mode 100644
