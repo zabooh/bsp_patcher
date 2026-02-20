@@ -26,7 +26,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..a1d5ed0f3ace1129bf9cc59cc2398bfdcfb8edd8
 --- /dev/null
 +++ b/board/mscc/common/rootfs_overlay/etc/network/interfaces
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,16 @@
 +# Preconfigured network interfaces
 +
 +auto lo
@@ -36,7 +36,6 @@ index 0000000000000000000000000000000000000000..a1d5ed0f3ace1129bf9cc59cc2398bfd
 +iface eth0 inet static
 +    address 192.168.0.5
 +    netmask 255.255.0.0
-+    post-up ethtool --set-plca-cfg eth0 enable on node-id 0 node-cnt 8
 +
 +auto eth1
 +iface eth1 inet static
@@ -380,7 +379,7 @@ index 0000000000000000000000000000000000000000..7bd0bdbb1597206bbe4d8745530d3224
 
 diff --git a/package/lan8651-kernel-config/Config.in b/package/lan8651-kernel-config/Config.in
 new file mode 100644
-index 0000000000000000000000000000000000000000..0000000000000000000000000000000000000000
+index 0000000000000000000000000000000000000000..fedcba0987654321fedcba0987654321fedcba09
 --- /dev/null
 +++ b/package/lan8651-kernel-config/Config.in
 @@ -0,0 +1,6 @@
@@ -393,7 +392,7 @@ index 0000000000000000000000000000000000000000..00000000000000000000000000000000
 
 diff --git a/package/lan8651-kernel-config/lan8651-kernel-config.mk b/package/lan8651-kernel-config/lan8651-kernel-config.mk
 new file mode 100644
-index 0000000000000000000000000000000000000000..0000000000000000000000000000000000000000
+index 0000000000000000000000000000000000000000..abcdef1234567890abcdef1234567890abcdef12
 --- /dev/null
 +++ b/package/lan8651-kernel-config/lan8651-kernel-config.mk
 @@ -0,0 +1,19 @@
@@ -420,7 +419,7 @@ index 0000000000000000000000000000000000000000..00000000000000000000000000000000
 
 
 diff --git a/package/Config.in b/package/Config.in
-index 0000000000000000000000000000000000000000..0000000000000000000000000000000000000000 100644
+index abcdef1234567890abcdef1234567890abcdef12..fedcba0987654321fedcba0987654321fedcba09 100644
 --- a/package/Config.in
 +++ b/package/Config.in
 @@ -2842,3 +2842,4 @@
@@ -428,3 +427,5 @@ index 0000000000000000000000000000000000000000..00000000000000000000000000000000
 	source "package/kvmtool/Config.in"
 +	source "package/lan8651-kernel-config/Config.in"
 	source "package/libostree/Config.in"
+
+
