@@ -1,6 +1,7 @@
 # LAN8651 BSP Patcher
 
-**BSP Version: 2025.12**
+**BSP Version: 2025.12**  
+**Last Updated: February 20, 2026**
 
 This repository contains scripts and patches for building and customizing a Microchip BSP (Board Support Package) with LAN8651 Ethernet PHY support and AIoT Wedge customizations.
 
@@ -90,6 +91,8 @@ git apply --summary prebuild_lan8651_customizations_clean.patch
  create mode 100644 board/mscc/common/rootfs_overlay/etc/network/interfaces
  create mode 100755 board/mscc/common/rootfs_overlay/sbin/update.sh
  create mode 100644 external/package/mscc-dts-overlays/0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch
+ create mode 100644 package/lan8651-kernel-config/Config.in
+ create mode 100644 package/lan8651-kernel-config/lan8651-kernel-config.mk
 ```
 
 **Complete patch statistics (including modifications):**
@@ -99,26 +102,38 @@ git apply --numstat prebuild_lan8651_customizations_clean.patch
 
 2       0       board/mscc/common/rootfs_overlay/etc/fw_env.config
 7       0       board/mscc/common/rootfs_overlay/etc/mosquitto/mosquitto.conf
-16      0       board/mscc/common/rootfs_overlay/etc/network/interfaces
-260     0       board/mscc/common/rootfs_overlay/sbin/update.sh
-2       0       external/configs/arm_standalone_defconfig
+17      0       board/mscc/common/rootfs_overlay/etc/network/interfaces
+287     0       board/mscc/common/rootfs_overlay/sbin/update.sh
+3       0       external/configs/arm_standalone_defconfig
 11      0       external/package/mscc-dts-overlays/0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch
+6       0       package/lan8651-kernel-config/Config.in
+19      0       package/lan8651-kernel-config/lan8651-kernel-config.mk
+1       0       package/Config.in
 ```
 
 **Important:** Notice that `external/configs/arm_standalone_defconfig` is **modified** (not created), showing that the patch also changes existing build configuration files.
 
+**New Features in Latest Version:**
+- **Automatic T1S PHY Configuration**: `package/lan8651-kernel-config/` ensures kernel driver activation
+- **PLCA Support**: Automatic Physical Layer Collision Avoidance configuration for eth0
+- **Improved Hook Timing**: Uses `LINUX_POST_CONFIGURE_HOOKS` for reliable kernel configuration
+
 **Note**: The patch automatically includes the GPIO fix (`0001-lan8651-use-gpio36-irq-for-40pin-adapter.patch`) needed for AIoT Wedge hardware compatibility with BSP 2025.12.
 
 #### Network Configuration
-- **eth0**: Static IP `192.268.0.5/16` (AIoT network segment)
+- **eth0**: Static IP `192.168.0.5/16` (AIoT network segment) with PLCA configuration
 - **eth1**: Static IP `192.168.178.20/16` (Management network)
 - **eth2**: Intentionally unconfigured (flexible use)
+
+#### LAN8651 T1S PHY Configuration
+- **Automatic Kernel Configuration**: `CONFIG_MICROCHIP_T1S_PHY=y` set via build hook
+- **PLCA Settings**: Node-ID 0, Node-Count 8 (Applied automatically on eth0 startup)
 
 #### MQTT Broker Setup
 Mosquitto MQTT broker with:
 - Port: 1883
 - Anonymous access enabled
-- Persistent message storage
+- Message persistence disabled for reduced storage usage
 - Suitable for AIoT device communication
 
 #### Device Tree Modifications
@@ -142,8 +157,9 @@ Location: `board/mscc/common/rootfs_overlay/etc/network/interfaces`
 ```ini
 auto eth0
 iface eth0 inet static
-    address 192.268.0.5      # AIoT network
+    address 192.168.0.5      # AIoT network
     netmask 255.255.0.0
+    post-up ethtool --set-plca-cfg eth0 enable on node-id 0 node-cnt 8
 
 auto eth1
 iface eth1 inet static
@@ -155,11 +171,27 @@ iface eth1 inet static
 Location: `board/mscc/common/rootfs_overlay/etc/mosquitto/mosquitto.conf`
 
 Features:
-- Anonymous publishing/subscribing
-- Message persistence
+- Anonymous publishing/subscribing  
+- Message persistence disabled (reduced storage footprint)
 - Suitable for AIoT sensor data collection
 
-### 3. U-Boot Environment Configuration
+### 3. LAN8651 T1S PHY Kernel Configuration
+Location: `package/lan8651-kernel-config/`
+
+Automated kernel configuration ensuring T1S PHY driver support:
+- **Build Hook**: Automatically sets `CONFIG_MICROCHIP_T1S_PHY=y` in kernel `.config`
+- **Timing**: Uses `LINUX_POST_CONFIGURE_HOOKS` for proper timing
+- **Fallback**: Appends configuration if substitution fails
+
+### 4. PLCA Network Configuration  
+Location: `board/mscc/common/rootfs_overlay/etc/network/interfaces`
+
+Physical Layer Collision Avoidance (PLCA) for 10BASE-T1L:
+- **Node ID**: 0 (Coordinator/Master node)
+- **Node Count**: 8 (Network supports up to 8 nodes)
+- **Automatic Setup**: PLCA configured via `post-up` during interface activation
+
+### 5. U-Boot Environment Configuration
 Location: `board/mscc/common/rootfs_overlay/etc/fw_env.config`
 
 Enables Linux-based U-Boot environment manipulation:
@@ -167,7 +199,7 @@ Enables Linux-based U-Boot environment manipulation:
 - Backup environment: 0x1C0000 (1.75MB offset)
 - Dual-slot boot support for reliable updates
 
-### 4. Update System
+### 6. Update System
 Location: `board/mscc/common/rootfs_overlay/sbin/update.sh`
 
 Comprehensive A/B partition update system:
@@ -176,7 +208,7 @@ Comprehensive A/B partition update system:
 - Failsafe dual-boot configuration
 - Automated U-Boot environment switching
 
-### 5. Security Configuration
+### 7. Security Configuration
 - Root password: `microchip` (configurable in buildroot)
 - SSH access via Dropbear
 - Web server: Hiawatha
@@ -208,10 +240,12 @@ The LAN8651 setup uses a stacked configuration:
 
 ### LAN8651 PHY Settings
 - **SPI Interface**: Up to 15MHz
-- **Interrupt**: GPIO36 (falling edge)
+- **Interrupt**: GPIO36 (falling edge) 
 - **Protocol**: 10BASE-T1L (10 Mbps over single pair)
 - **Network Interface**: eth0 (LAN8651 PHY)
 - **Link Status**: "Link is Up - 10Mbps/Half - flow control off"
+- **PLCA Configuration**: Node-ID 0, Node-Count 8 (Applied automatically via post-up)
+- **Kernel Driver**: `CONFIG_MICROCHIP_T1S_PHY=y` (Set automatically during build)
 
 ### U-Boot Overlay Configuration
 The LAN8651 overlay requires U-Boot environment setup:
@@ -356,10 +390,10 @@ boot
 
 **Configure PLCA during runtime:**
 ```bash
-ethtool --set-plca-cfg eth2 enable on node-id 0 node-cnt 8
-ethtool --get-plca-cfg eth2
-ip addr add dev eth2 192.168.10.11/24
-ip link set eth2 up
+ethtool --set-plca-cfg eth0 enable on node-id 0 node-cnt 8
+ethtool --get-plca-cfg eth0
+ip addr add dev eth0 192.168.0.5/16
+ip link set eth0 up
 ifconfig
 ```
 
@@ -423,12 +457,12 @@ zcat /proc/config.gz | grep -E "(NETFILTER|NF_|IP_NF_)"
 echo 1 > /proc/sys/net/ipv4/ip_forward
 
 # Add routing rules between networks
-# Route AIoT network (192.268.0.0/16) via Management network (192.168.178.0/16)
-ip route add 192.268.0.0/16 via 192.168.178.1 dev eth1
-ip route add 192.168.178.0/16 via 192.268.0.1 dev eth0
+# Route AIoT network (192.168.0.0/16) via Management network (192.168.178.0/16)
+ip route add 192.168.0.0/16 via 192.168.178.1 dev eth1
+ip route add 192.168.178.0/16 via 192.168.0.1 dev eth0
 
 # Optional: NAT for internet access via eth1
-iptables -t nat -A POSTROUTING -s 192.268.0.0/16 -o eth1 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s 192.168.0.0/16 -o eth1 -j MASQUERADE
 iptables -A FORWARD -i eth0 -o eth1 -j ACCEPT
 iptables -A FORWARD -i eth1 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
 ```
@@ -452,9 +486,10 @@ iptables -A FORWARD -i eth1 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCE
 
 #### Network Configuration
 - **IP conflicts**: Verify network segments don't conflict with existing infrastructure
-- **AIoT connectivity**: Ensure 192.268.0.x subnet is routed properly
+- **AIoT connectivity**: Ensure 192.168.0.x subnet is routed properly
 - **Interface bridging**: eth0 (LAN8651) cannot be bridged with eth1/eth2 interfaces
 - **Traffic forwarding**: LAN8651 traffic does not forward to other Ethernet interfaces
+- **PLCA Configuration**: Verify T1S PLCA settings with `ethtool --get-plca-cfg eth0`
 
 #### Update Problems
 - **TFTP timeout**: Verify server accessibility and file presence
@@ -465,6 +500,12 @@ iptables -A FORWARD -i eth1 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCE
 ```bash
 # Check network status
 ip addr show
+
+# Verify PLCA configuration
+ethtool --get-plca-cfg eth0
+
+# Verify T1S PHY kernel support
+grep CONFIG_MICROCHIP_T1S_PHY /proc/config.gz || zcat /proc/config.gz | grep T1S
 
 # Verify MQTT broker
 mosquitto_sub -t test/topic
@@ -479,10 +520,12 @@ fdisk -l /dev/mmcblk0
 ## Development Notes
 
 ### Customization Points
-- **Network addresses**: Modify `interfaces` file in patch
-- **MQTT settings**: Adjust `mosquitto.conf` parameters
-- **Build options**: Edit `arm_standalone_defconfig`
-- **Hardware settings**: Modify Device Tree overlays
+- **Network addresses**: Modify `interfaces` file in patch for IP configuration
+- **PLCA settings**: Adjust node-id and node-cnt in `post-up` command
+- **MQTT settings**: Adjust `mosquitto.conf` parameters (persistence, ports, etc.)
+- **Build options**: Edit `arm_standalone_defconfig` for package selection
+- **Hardware settings**: Modify Device Tree overlays for GPIO configuration
+- **Kernel configuration**: Extend `lan8651-kernel-config.mk` for additional kernel options
 
 ### Adding New Features
 1. Modify the patch file with new configurations
