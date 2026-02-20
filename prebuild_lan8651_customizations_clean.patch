@@ -36,6 +36,7 @@ index 0000000000000000000000000000000000000000..a1d5ed0f3ace1129bf9cc59cc2398bfd
 +iface eth0 inet static
 +    address 192.168.0.5
 +    netmask 255.255.0.0
++    post-up ethtool --set-plca-cfg eth0 enable on node-id 0 node-cnt 8
 +
 +auto eth1
 +iface eth1 inet static
