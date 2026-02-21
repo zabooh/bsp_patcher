@@ -210,19 +210,29 @@ if (setsockopt(sockfd, SOL_SOCKET, SO_TIMESTAMPING,
 
 ### Hardware-Features des LAN743x
 
-Der Microchip LAN743x (LAN7430/7431) bietet umfassende Hardware PTP-Unterstützung:
+Der Microchip LAN743x (LAN7430/7431) ist ein **PCIe-zu-Gigabit-Ethernet-Controller** mit integrierter Hardware PTP-Unterstützung. Die PTP-Funktionalität ist primär im **Ethernet-Controller** implementiert, nicht im PCIe-Interface:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    LAN743x SoC                          │
-│  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐ │
-│  │ PCIe        │    │ PTP Engine   │    │ Ethernet    │ │
-│  │ Interface   │◄──►│ - 125MHz Clk │◄──►│ MAC/PHY     │ │
-│  │             │    │ - TX/RX FIFO │    │             │ │
-│  │             │    │ - GPIO Pins  │    │             │ │
-│  └─────────────┘    └──────────────┘    └─────────────┘ │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         LAN743x Controller                      │
+│  ┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐ │
+│  │ PCIe        │    │ PTP Engine       │    │ Ethernet        │ │
+│  │ Interface   │    │ - 125MHz PTP Clk │◄──►│ MAC/PHY         │ │
+│  │ (Gen2 x1)   │◄──►│ - HW Timestamps  │    │ - TX/RX Stamps  │ │
+│  │ - Registers │    │ - Event Channels │    │ - Link Speed    │ │
+│  │ - Interrupts│    │ - GPIO Control   │    │ - Frame Filter  │ │
+│  └─────────────┘    └──────────────────┘    └─────────────────┘ │
+│        ▲                       ▲                        ▲        │
+│        │                       │                        │        │
+│   CPU Access              Independent              Wire Speed     │
+│   (~100ns)                PTP Clock               Timestamping    │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+**Wichtige Architektur-Aspekte:**
+- **PTP-Clock läuft unabhängig**: 125 MHz Crystal, nicht von PCIe-Clock abgeleitet
+- **Hardware-Timestamping**: Erfolgt direkt am Ethernet PHY/MAC (Wire-Speed)
+- **PCIe-Relevanz**: Nur für Register-Zugriff und Interrupt-Handling
 
 **Spezifikationen:**
 - **Clock-Frequenz**: 125 MHz (8ns Auflösung)
@@ -230,6 +240,220 @@ Der Microchip LAN743x (LAN7430/7431) bietet umfassende Hardware PTP-Unterstützu
 - **Event-Kanäle**: 2 (Timer A/B)
 - **GPIO-Pins**: 4 (LAN7430) / 12 (LAN7431)
 - **Timestamp-FIFO**: Hardware-gepuffert
+- **PCIe-Interface**: Gen2 x1 (für Register-Zugriff)
+
+### Warum PCIe für PTP nicht kritisch ist
+
+Die **PTP-Core-Funktionalität** ist unabhängig vom PCIe-Interface implementiert:
+
+#### **Hardware-Timestamping erfolgt am Ethernet-Port:**
+```c
+// Timestamp wird direkt beim Frame-Ein/Ausgang erstellt
+// NICHT beim PCIe-Transfer zur CPU
+Frame RX: Ethernet PHY ──[HW-Timestamp]──► FIFO ──PCIe──► CPU
+Frame TX: CPU ──PCIe──► FIFO ──[HW-Timestamp]──► Ethernet PHY
+```
+
+#### **PTP-Clock läuft autonom:**
+- **125 MHz Crystal**: Unabhängige Referenz (nicht PCIe-abgeleitet)
+- **Hardware-Servo**: Frequenz-Adjustments ohne CPU-Intervention
+- **Event-Generation**: GPIO-Pulse direkt von PTP-Clock gesteuert
+
+#### **Aber: PCIe beeinflusst indirekt die Performance:**
+
+| Aspekt | PCIe-Einfluss | Typischer Impact |
+|--------|---------------|------------------|
+| **Register-Zugriff** | PCIe-Latency (~100-200ns) | Vernachlässigbar für PTP |
+| **Interrupt-Latency** | PCIe + OS Overhead (~1-10µs) | Kann TX-Timestamp-Abruf verzögern |
+| **Timestamp-FIFO** | PCIe-Bandwidth | Bei hoher Last relevant |
+| **Clock-Adjustments** | CPU → Register via PCIe | ~100ns für `adjfine()` |
+
+#### **Vergleich: Embedded vs. PCIe PTP-Controller:**
+
+```
+Embedded Controller (z.B. ARM + PHY):
+├── CPU ──[Register Bus]──► PTP Engine ──► Ethernet  (10-50ns Register-Zugriff)
+
+PCIe Controller (z.B. LAN743x):  
+├── CPU ──[PCIe TLP]──► PTP Engine ──► Ethernet      (100-200ns Register-Zugriff)
+```
+
+**Fazit**: PCIe ist **nicht** der limitierende Faktor für PTP-Genauigkeit, da Timestamping hardwarenah erfolgt.
+
+**Zusammenfassung: PCIe vs. PTP Performance**
+
+- ✅ **PTP-Core arbeitet autonom**: Hardware-Clock, Timestamping, Event-Generation
+- ✅ **Nanosekunden-Genauigkeit**: Unabhängig von PCIe-Latency (100-200ns)  
+- ⚠️ **PCIe-Einfluss begrenzt**: Nur Register-Zugriffe und Interrupt-Handling
+- ⚠️ **High-Load-Szenarien**: PCIe-Bandwidth kann Timestamp-Abruf verzögern
+- ✅ **Praktisch**: LAN743x erreicht <100ns PTP-Genauigkeit trotz PCIe-Interface
+
+**Beispiel-Messung** (Typische Werte):
+```
+PTP Sync Message: 
+├── Hardware RX-Timestamp:     1645000000.123456789 (Nanosekunden-Genau)
+├── PCIe Interrupt Delivery:   ~2-5µs später
+├── CPU Register-Read:         ~100-200ns
+└── ptp4l Processing:          ~10-50µs
+
+→ Hardware-Timestamp bleibt präzise, nur Software-Processing verzögert
+```
+
+---
+
+## LAN865x T1S PTP-Implementierung (Zukünftig)
+
+### MAC-PHY vs. separater PHY: Wo gehört PTP hin?
+
+Der **LAN865x (LAN8650/8651)** ist ein **10BASE-T1S MAC-PHY-Controller** mit **integrierter PTP-Hardware**, aber noch **ohne Treiber-Unterstützung**. Die Architektur unterscheidet sich bedeutend vom LAN743x:
+
+```
+LAN743x (PCIe-Ethernet-Controller):
+├── CPU ──[PCIe]──► LAN743x ──► Ethernet PHY (extern)
+│                      │
+│                      └────► PTP Engine (im Controller)
+
+LAN865x (T1S MAC-PHY):  
+├── CPU ──[SPI]──► LAN865x ──► T1S Line (integriert)
+│                     │
+│                     ├────► MAC Layer
+│                     ├────► PHY Layer  
+│                     └────► PTP Engine (wo genau?)
+```
+
+### Aktuelle Hardware-Evidenz im LAN865x Treiber
+
+Bereits im bestehenden Code finden sich **PTP-Hardware-Hinweise**:
+
+```c
+/* MAC TSU Timer Increment Register */
+#define LAN865X_REG_MAC_TSU_TIMER_INCR     0x00010077
+#define MAC_TSU_TIMER_INCR_COUNT_NANOSECONDS 0x0028  // 40ns = 25MHz
+
+/* Aus lan865x_probe(): */
+/* LAN865x Rev.B0/B1 configuration parameters from AN1760
+ * configure the MAC to set time stamping at the end of the 
+ * Start of Frame Delimiter (SFD) and set the Timer Increment 
+ * reg to 40 ns to be used as a 25 MHz internal clock.
+ */
+ret = oa_tc6_write_register(priv->tc6, LAN865X_REG_MAC_TSU_TIMER_INCR,
+                            MAC_TSU_TIMER_INCR_COUNT_NANOSECONDS);
+```
+
+**Interpretation:**
+- **TSU** = Time Sync Unit (PTP-Hardware vorhanden!)
+- **SFD Timestamping** = Hardware-Timestamping am Wire
+- **25 MHz Clock** = PTP-Referenz-Takt (40ns Auflösung)
+
+### Architektur-Entscheidung: MAC vs. PHY-Treiber
+
+Für den **LAN865x** sollte PTP im **MAC-Treiber** implementiert werden:
+
+#### ✅ **Argumente für MAC-Treiber (`lan865x.c`):**
+
+1. **Integrierter MAC-PHY**: Keine Trennung von MAC/PHY-Treibern
+2. **Register-Zugriff**: PTP-Register sind über SPI/OA-TC6 erreichbar (MAC-Domain)  
+3. **Network-Device**: `struct net_device` existiert bereits im MAC-Treiber
+4. **Timestamping**: Hardware-Timestamping erfolgt im MAC-Layer (SFD-Ende)
+5. **Architektur-Konsistenz**: Analog zu LAN743x (alle PTP-Features im MAC-Treiber)
+
+#### ❌ **Argumente gegen PHY-Treiber:**
+
+1. **Doppelte Implementierung**: MAC-Treiber müsste trotzdem PTP-Clock registrieren
+2. **Komplexere Koordination**: MAC ⟷ PHY Kommunikation für Timestamping
+3. **Register-Zugriff**: PTP-Register sind nicht über MDIO erreichbar
+4. **10BASE-T1S Spezialfall**: Integrierter Controller, nicht separater PHY
+
+### Vorgeschlagene LAN865x PTP-Implementierung
+
+#### **Struktur-Erweiterung:**
+```c
+struct lan865x_priv {
+    struct work_struct multicast_work;
+    struct net_device *netdev;
+    struct spi_device *spi;
+    struct oa_tc6 *tc6;
+    
+    /* PTP-Erweiterungen */
+    struct ptp_clock_info ptp_clock_info;
+    struct ptp_clock *ptp_clock;
+    struct mutex ptp_lock;
+    
+    /* Timestamps */
+    spinlock_t tx_ts_lock;
+    struct sk_buff *tx_ts_skb_queue[LAN865X_PTP_MAX_TX_TS];
+    u32 tx_ts_queue_size;
+    
+    u32 ptp_flags;
+};
+```
+
+#### **Fehlende Register definieren** (Basis auf TSU-Evidenz):
+```c
+/* PTP/TSU Registers (abgeleitet vom vorhandenen TSU_TIMER_INCR) */
+#define LAN865X_REG_PTP_CLOCK_SEC          0x00010070  // PTP Seconds
+#define LAN865X_REG_PTP_CLOCK_NS           0x00010071  // PTP Nanoseconds  
+#define LAN865X_REG_PTP_CLOCK_SUBNS        0x00010072  // PTP Sub-Nanoseconds
+#define LAN865X_REG_PTP_RATE_ADJ           0x00010073  // Frequency Adjustment
+#define LAN865X_REG_PTP_CMD_CTL            0x00010074  // PTP Commands
+#define LAN865X_REG_PTP_TX_TS_SEC          0x00010075  // TX Timestamp Sec
+#define LAN865X_REG_PTP_TX_TS_NS           0x00010076  // TX Timestamp NS
+#define LAN865X_REG_MAC_TSU_TIMER_INCR     0x00010077  // Timer Increment (bereits definiert)
+
+/* PTP Control Flags */
+#define LAN865X_PTP_ENABLE                 BIT(0)
+#define LAN865X_PTP_TX_TSTAMP_EN           BIT(1)
+#define LAN865X_PTP_RX_TSTAMP_EN           BIT(2)
+```
+
+#### **Integration in bestehenden Workflow:**
+```c
+static int lan865x_probe(struct spi_device *spi)
+{
+    /* ... bestehender Code ... */
+    
+    /* PTP initialisieren */
+    ret = lan865x_ptp_init(priv);
+    if (ret) {
+        dev_err(&spi->dev, "Failed to init PTP: %d\n", ret);
+        goto oa_tc6_exit;
+    }
+    
+    /* TSU schon konfiguriert */
+    ret = oa_tc6_write_register(priv->tc6, LAN865X_REG_MAC_TSU_TIMER_INCR,
+                               MAC_TSU_TIMER_INCR_COUNT_NANOSECONDS);
+    
+    /* PTP aktivieren */  
+    ret = lan865x_ptp_open(priv);
+    if (ret) {
+        dev_warn(&spi->dev, "PTP initialization failed: %d\n", ret);
+        /* Nicht-fatal, Netzwerk funktioniert ohne PTP */
+    }
+    
+    /* ... restlicher Code ... */
+}
+```
+
+### Herausforderungen bei SPI-basierten PTP
+
+Im Gegensatz zum **PCIe LAN743x** hat der **SPI LAN865x** zusätzliche Latency-Quellen:
+
+| Aspekt | LAN743x (PCIe) | LAN865x (SPI) |
+|--------|----------------|---------------|
+| **Register-Zugriff** | 100-200ns | 1-10µs (SPI-Clock abhängig) |
+| **Interrupt-Latency** | ~1µs | ~5-20µs (SPI + GPIO) |
+| **Timestamp-Abruf** | Hardware-FIFO | SPI-Read-Sequenz |
+| **Clock-Adjustment** | Sofort | Via SPI-Transaktion |
+
+**Aber**: Die **PTP-Genauigkeit bleibt unberührt**, da Hardware-Timestamping am SFD erfolgt!
+
+### Nächste Schritte für LAN865x PTP
+
+1. **Hardware-Dokumentation**: Microchip LAN865x Register-Map für PTP-Register
+2. **Treiber-Erweiterung**: PTP-Framework-Integration in `lan865x.c`
+3. **SPI-Optimierung**: Effiziente Register-Zugriffe für PTP-Operations
+4. **Timestamping**: TX/RX Timestamp-Handling über OA-TC6
+5. **Testing**: Verification gegen Hardware mit bekanntem PTP-Master
 
 ### Treiber-Struktur Übersicht
 
@@ -335,12 +559,14 @@ static int lan743x_ptpci_adjfine(struct ptp_clock_info *ptpci, long scaled_ppm)
     else
         lan743x_rate_adj = (u32)u64_delta | PTP_CLOCK_RATE_ADJ_DIR_;
     
-    /* Hardware-Register schreiben */
+    /* Hardware-Register schreiben (via PCIe, aber Effekt ist sofort in HW) */
     lan743x_csr_write(adapter, PTP_CLOCK_RATE_ADJ, lan743x_rate_adj);
     
     return 0;
 }
 ```
+
+**Wichtig**: Obwohl der Register-Zugriff ~100-200ns via PCIe dauert, erfolgt die **tatsächliche Clock-Adjustierung sofort in Hardware**. Die PTP-Engine wendet das Adjustment kontinuierlich auf den 125MHz-Takt an, unabhängig von weiteren CPU/PCIe-Operationen.
 
 **Mathematische Herleitung:**
 ```
