@@ -1185,7 +1185,667 @@ awk -F, 'NR>1 {sum+=$2; sumsq+=$2*$2; n++} END {
 
 ---
 
-## Anhang
+## 9. Strategie: PTP-Support im LAN865x Treiber implementieren
+
+### Überblick der Implementierungsstrategie
+
+Basierend auf der bestehenden LAN865x-Architektur und den bereits vorhandenen TSU-Hardware-Hints, hier eine konkrete Strategie zur Implementierung von Hardware PTP-Support:
+
+### 9.1. Phasenplan
+
+#### **Phase 1: Hardware-Analyse und Register-Mapping**
+```
+1. Hardware-Dokumentation beschaffen
+   ├── LAN865x Datasheet (PTP/TSU Sektion)
+   ├── Register-Map für PTP-Funktionen  
+   ├── Application Note AN1760 (bereits teilweise implementiert)
+   └── Hardware-Evaluierung mit Oszilloskop/Logic-Analyzer
+
+2. Bestehende TSU-Funktionalität analysieren
+   ├── TSU_TIMER_INCR Register (bereits in Gebrauch)
+   ├── SFD-Timestamping Konfiguration
+   └── 25MHz PTP-Clock-Verifikation
+```
+
+#### **Phase 2: Treiber-Struktur erweitern**
+```
+3. PTP-Framework Integration vorbereiten
+   ├── Datenstrukturen erweitern
+   ├── Register-Definitionen hinzufügen
+   ├── Grundlegende PTP-Funktionen implementieren
+   └── Build-System anpassen
+```
+
+#### **Phase 3: Core PTP-Funktionen**
+```
+4. PTP Clock Interface implementieren
+   ├── adjtime/adjfine Operations
+   ├── gettime/settime Operations
+   ├── Hardware Clock-Management
+   └── SPI-Access-Optimierung
+
+5. Hardware Timestamping
+   ├── TX-Timestamp Handling
+   ├── RX-Timestamp Handling  
+   ├── FIFO-Management
+   └── Interrupt-Integration
+```
+
+#### **Phase 4: Advanced Features**
+```
+6. GPIO und Events (falls verfügbar)
+   ├── Periodic Output (PPS)
+   ├── External Timestamps
+   ├── Event Channels
+   └── Pin-Configuration
+
+7. Testing und Optimierung
+   ├── LinuxPTP Integration
+   ├── Performance-Messungen
+   ├── Stress-Testing
+   └── Dokumentation
+```
+
+### 9.2. Detaillierte Implementierung
+
+#### **Schritt 1: Header-Datei erweitern**
+
+Neue Datei: `drivers/net/ethernet/microchip/lan865x/lan865x_ptp.h`
+
+```c
+/* SPDX-License-Identifier: GPL-2.0+ */
+/* LAN865x PTP Hardware Support */
+
+#ifndef _LAN865X_PTP_H
+#define _LAN865X_PTP_H
+
+#include <linux/ptp_clock_kernel.h>
+#include <linux/net_tstamp.h>
+
+/* PTP Register Definitions (basierend auf TSU-Hardware) */
+#define LAN865X_REG_PTP_CMD_CTL            0x00010070
+#define LAN865X_REG_PTP_CLOCK_SEC          0x00010071
+#define LAN865X_REG_PTP_CLOCK_NS           0x00010072
+#define LAN865X_REG_PTP_CLOCK_SUBNS        0x00010073
+#define LAN865X_REG_PTP_RATE_ADJ           0x00010074
+#define LAN865X_REG_PTP_STEP_ADJ_SEC       0x00010075
+#define LAN865X_REG_PTP_STEP_ADJ_NS        0x00010076
+/* 0x00010077 = TSU_TIMER_INCR bereits definiert */
+#define LAN865X_REG_PTP_TX_TS_FIFO         0x00010078
+#define LAN865X_REG_PTP_RX_TS_FIFO         0x00010079
+#define LAN865X_REG_PTP_INT_STS            0x0001007A
+#define LAN865X_REG_PTP_INT_EN             0x0001007B
+
+/* Command Control Bits */
+#define LAN865X_PTP_CMD_ENABLE             BIT(0)
+#define LAN865X_PTP_CMD_DISABLE            BIT(1)
+#define LAN865X_PTP_CMD_CLOCK_READ         BIT(2)
+#define LAN865X_PTP_CMD_CLOCK_LOAD         BIT(3)
+#define LAN865X_PTP_CMD_STEP_SEC           BIT(4)
+#define LAN865X_PTP_CMD_STEP_NS            BIT(5)
+
+/* Rate Adjustment */
+#define LAN865X_PTP_RATE_ADJ_DIR           BIT(31)
+#define LAN865X_PTP_MAX_ADJ_PPB            31250000  // ±31.25 ppm
+
+/* Interrupt Bits */
+#define LAN865X_PTP_INT_TX_TS              BIT(0)
+#define LAN865X_PTP_INT_RX_TS              BIT(1)
+#define LAN865X_PTP_INT_TS_OVERFLOW        BIT(2)
+
+/* Timestamp Queue Size */
+#define LAN865X_PTP_TX_TS_QUEUE_SIZE       4
+#define LAN865X_PTP_RX_TS_QUEUE_SIZE       8
+
+/* PTP State Flags */
+#define LAN865X_PTP_FLAG_ENABLED           BIT(0)
+#define LAN865X_PTP_FLAG_TX_TS_ENABLED     BIT(1)
+#define LAN865X_PTP_FLAG_RX_TS_ENABLED     BIT(2)
+
+struct lan865x_adapter;
+
+/* PTP Timestamp Entry */
+struct lan865x_ptp_ts {
+    u32 sec;
+    u32 nsec;
+    u16 seq_id;
+    u8 msg_type;
+    u8 domain;
+};
+
+/* PTP Private Data */
+struct lan865x_ptp {
+    struct ptp_clock_info ptp_clock_info;
+    struct ptp_clock *ptp_clock;
+    struct mutex cmd_lock;
+    spinlock_t ts_lock;
+    
+    /* TX Timestamp Queue */
+    struct sk_buff *tx_ts_skb_queue[LAN865X_PTP_TX_TS_QUEUE_SIZE];
+    struct lan865x_ptp_ts tx_ts_queue[LAN865X_PTP_TX_TS_QUEUE_SIZE];
+    u32 tx_ts_head;
+    u32 tx_ts_tail;
+    u32 tx_ts_count;
+    
+    /* RX Timestamp Queue */
+    struct lan865x_ptp_ts rx_ts_queue[LAN865X_PTP_RX_TS_QUEUE_SIZE];
+    u32 rx_ts_head;
+    u32 rx_ts_tail;
+    u32 rx_ts_count;
+    
+    /* Statistics */
+    u64 tx_ts_processed;
+    u64 rx_ts_processed;
+    u64 ts_errors;
+    
+    u32 flags;
+};
+
+/* Function Prototypes */
+int lan865x_ptp_init(struct lan865x_adapter *adapter);
+int lan865x_ptp_open(struct lan865x_adapter *adapter);
+void lan865x_ptp_close(struct lan865x_adapter *adapter);
+void lan865x_ptp_remove(struct lan865x_adapter *adapter);
+
+bool lan865x_ptp_is_ptp_frame(struct sk_buff *skb);
+int lan865x_ptp_tx_timestamp_enable(struct lan865x_adapter *adapter, struct sk_buff *skb);
+void lan865x_ptp_tx_timestamp_process(struct lan865x_adapter *adapter);
+void lan865x_ptp_rx_timestamp_process(struct lan865x_adapter *adapter, struct sk_buff *skb);
+
+#endif /* _LAN865X_PTP_H */
+```
+
+#### **Schritt 2: Basis-Datenstruktur erweitern**
+
+In `lan865x.c` die `lan865x_priv` Struktur erweitern:
+
+```c
+#include "lan865x_ptp.h"
+
+struct lan865x_priv {
+    struct work_struct multicast_work;
+    struct net_device *netdev;
+    struct spi_device *spi;
+    struct oa_tc6 *tc6;
+    
+    /* PTP Support hinzufügen */
+    struct lan865x_ptp ptp;
+    bool ptp_enabled;
+};
+```
+
+#### **Schritt 3: PTP Clock Interface implementieren**
+
+Neue Datei: `drivers/net/ethernet/microchip/lan865x/lan865x_ptp.c`
+
+```c
+#include <linux/module.h>
+#include <linux/ptp_clock_kernel.h>
+#include <linux/net_tstamp.h>
+#include <linux/oa_tc6.h>
+#include "lan865x_ptp.h"
+
+/* Helper function: Wait for PTP command completion */
+static int lan865x_ptp_wait_cmd_complete(struct lan865x_adapter *adapter, u32 cmd)
+{
+    int timeout = 1000; /* 1ms timeout */
+    u32 status;
+    int ret;
+    
+    while (timeout--) {
+        ret = oa_tc6_read_register(adapter->tc6, LAN865X_REG_PTP_CMD_CTL, &status);
+        if (ret)
+            return ret;
+            
+        if (!(status & cmd))
+            return 0; /* Command completed */
+            
+        usleep_range(1, 10);
+    }
+    
+    return -ETIMEDOUT;
+}
+
+/* PTP Clock adjfine implementation */
+static int lan865x_ptp_adjfine(struct ptp_clock_info *ptp_info, long scaled_ppm)
+{
+    struct lan865x_ptp *ptp = container_of(ptp_info, struct lan865x_ptp, ptp_clock_info);
+    struct lan865x_adapter *adapter = container_of(ptp, struct lan865x_adapter, ptp);
+    u32 adj_val = 0;
+    u64 adj_abs;
+    bool negative;
+    int ret;
+    
+    if (scaled_ppm > LAN865X_PTP_MAX_ADJ_PPB || scaled_ppm < -LAN865X_PTP_MAX_ADJ_PPB)
+        return -ERANGE;
+    
+    negative = scaled_ppm < 0;
+    adj_abs = negative ? -scaled_ppm : scaled_ppm;
+    
+    /* Convert scaled_ppm to hardware register value
+     * Hardware expects: (2^32 * adj_ppm) / 1e9
+     * For 25MHz base clock: adj_val = (adj_abs * 2^32) / 25e6
+     */
+    adj_val = (u32)div_u64(adj_abs * (1ULL << 32), 25000000ULL);
+    
+    if (negative)
+        adj_val |= LAN865X_PTP_RATE_ADJ_DIR;
+    
+    mutex_lock(&ptp->cmd_lock);
+    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_RATE_ADJ, adj_val);
+    mutex_unlock(&ptp->cmd_lock);
+    
+    return ret;
+}
+
+/* PTP Clock adjtime implementation */
+static int lan865x_ptp_adjtime(struct ptp_clock_info *ptp_info, s64 delta)
+{
+    struct lan865x_ptp *ptp = container_of(ptp_info, struct lan865x_ptp, ptp_clock_info);
+    struct lan865x_adapter *adapter = container_of(ptp, struct lan865x_adapter, ptp);
+    u32 sec_delta, nsec_delta;
+    bool negative = delta < 0;
+    int ret;
+    
+    if (negative)
+        delta = -delta;
+    
+    sec_delta = div_u64_rem(delta, NSEC_PER_SEC, &nsec_delta);
+    
+    mutex_lock(&ptp->cmd_lock);
+    
+    /* Set step values */
+    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_STEP_ADJ_SEC, sec_delta);
+    if (ret)
+        goto exit;
+        
+    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_STEP_ADJ_NS, nsec_delta);
+    if (ret)
+        goto exit;
+    
+    /* Execute step command */
+    if (negative) {
+        ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_CMD_CTL, 
+                                   LAN865X_PTP_CMD_STEP_SEC | LAN865X_PTP_RATE_ADJ_DIR);
+    } else {
+        ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_CMD_CTL, 
+                                   LAN865X_PTP_CMD_STEP_SEC);
+    }
+    
+    if (!ret)
+        ret = lan865x_ptp_wait_cmd_complete(adapter, LAN865X_PTP_CMD_STEP_SEC);
+
+exit:
+    mutex_unlock(&ptp->cmd_lock);
+    return ret;
+}
+
+/* PTP Clock gettime64 implementation */
+static int lan865x_ptp_gettime64(struct ptp_clock_info *ptp_info, struct timespec64 *ts)
+{
+    struct lan865x_ptp *ptp = container_of(ptp_info, struct lan865x_ptp, ptp_clock_info);
+    struct lan865x_adapter *adapter = container_of(ptp, struct lan865x_adapter, ptp);
+    u32 sec, nsec;
+    int ret;
+    
+    mutex_lock(&ptp->cmd_lock);
+    
+    /* Trigger clock read */
+    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_CMD_CTL, 
+                               LAN865X_PTP_CMD_CLOCK_READ);
+    if (ret)
+        goto exit;
+        
+    ret = lan865x_ptp_wait_cmd_complete(adapter, LAN865X_PTP_CMD_CLOCK_READ);
+    if (ret)
+        goto exit;
+    
+    /* Read timestamp */
+    ret = oa_tc6_read_register(adapter->tc6, LAN865X_REG_PTP_CLOCK_SEC, &sec);
+    if (ret)
+        goto exit;
+        
+    ret = oa_tc6_read_register(adapter->tc6, LAN865X_REG_PTP_CLOCK_NS, &nsec);
+    if (!ret) {
+        ts->tv_sec = sec;
+        ts->tv_nsec = nsec;
+    }
+
+exit:
+    mutex_unlock(&ptp->cmd_lock);
+    return ret;
+}
+
+/* PTP Clock settime64 implementation */
+static int lan865x_ptp_settime64(struct ptp_clock_info *ptp_info, const struct timespec64 *ts)
+{
+    struct lan865x_ptp *ptp = container_of(ptp_info, struct lan865x_ptp, ptp_clock_info);
+    struct lan865x_adapter *adapter = container_of(ptp, struct lan865x_adapter, ptp);
+    int ret;
+    
+    mutex_lock(&ptp->cmd_lock);
+    
+    /* Set clock values */
+    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_CLOCK_SEC, (u32)ts->tv_sec);
+    if (ret)
+        goto exit;
+        
+    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_CLOCK_NS, (u32)ts->tv_nsec);
+    if (ret)
+        goto exit;
+    
+    /* Load clock */
+    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_CMD_CTL, 
+                               LAN865X_PTP_CMD_CLOCK_LOAD);
+    if (!ret)
+        ret = lan865x_ptp_wait_cmd_complete(adapter, LAN865X_PTP_CMD_CLOCK_LOAD);
+
+exit:
+    mutex_unlock(&ptp->cmd_lock);
+    return ret;
+}
+
+/* PTP Clock enable (placeholder for future extensions) */
+static int lan865x_ptp_enable(struct ptp_clock_info *ptp_info, struct ptp_clock_request *req, int on)
+{
+    /* Future: GPIO/PPS support */
+    return -EOPNOTSUPP;
+}
+
+/* Initialize PTP subsystem */
+int lan865x_ptp_init(struct lan865x_adapter *adapter)
+{
+    struct lan865x_ptp *ptp = &adapter->ptp;
+    
+    mutex_init(&ptp->cmd_lock);
+    spin_lock_init(&ptp->ts_lock);
+    
+    /* Initialize PTP clock info */
+    ptp->ptp_clock_info.owner = THIS_MODULE;
+    snprintf(ptp->ptp_clock_info.name, sizeof(ptp->ptp_clock_info.name),
+             "lan865x_%s", adapter->netdev->name);
+    
+    ptp->ptp_clock_info.max_adj = LAN865X_PTP_MAX_ADJ_PPB;
+    ptp->ptp_clock_info.n_alarm = 0;
+    ptp->ptp_clock_info.n_ext_ts = 0;  /* Future: External timestamping */
+    ptp->ptp_clock_info.n_per_out = 0; /* Future: Periodic output */
+    ptp->ptp_clock_info.n_pins = 0;    /* Future: GPIO pins */
+    ptp->ptp_clock_info.pps = 0;       /* Future: PPS support */
+    
+    ptp->ptp_clock_info.adjfine = lan865x_ptp_adjfine;
+    ptp->ptp_clock_info.adjtime = lan865x_ptp_adjtime;
+    ptp->ptp_clock_info.gettime64 = lan865x_ptp_gettime64;
+    ptp->ptp_clock_info.settime64 = lan865x_ptp_settime64;
+    ptp->ptp_clock_info.enable = lan865x_ptp_enable;
+    
+    return 0;
+}
+
+/* Open PTP (register with PTP subsystem) */
+int lan865x_ptp_open(struct lan865x_adapter *adapter)
+{
+    struct lan865x_ptp *ptp = &adapter->ptp;
+    int ret;
+    
+    /* Enable PTP hardware */
+    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_CMD_CTL, 
+                               LAN865X_PTP_CMD_ENABLE);
+    if (ret) {
+        netdev_err(adapter->netdev, "Failed to enable PTP hardware: %d\n", ret);
+        return ret;
+    }
+    
+    /* Register PTP clock */
+    ptp->ptp_clock = ptp_clock_register(&ptp->ptp_clock_info, &adapter->spi->dev);
+    if (IS_ERR(ptp->ptp_clock)) {
+        ret = PTR_ERR(ptp->ptp_clock);
+        netdev_err(adapter->netdev, "Failed to register PTP clock: %d\n", ret);
+        return ret;
+    }
+    
+    ptp->flags |= LAN865X_PTP_FLAG_ENABLED;
+    netdev_info(adapter->netdev, "PTP clock registered as ptp%d\n", 
+                ptp->ptp_clock->index);
+    
+    return 0;
+}
+
+/* Close PTP */
+void lan865x_ptp_close(struct lan865x_adapter *adapter)
+{
+    struct lan865x_ptp *ptp = &adapter->ptp;
+    
+    if (ptp->flags & LAN865X_PTP_FLAG_ENABLED) {
+        if (ptp->ptp_clock) {
+            ptp_clock_unregister(ptp->ptp_clock);
+            ptp->ptp_clock = NULL;
+        }
+        
+        /* Disable PTP hardware */
+        oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_CMD_CTL, 
+                             LAN865X_PTP_CMD_DISABLE);
+        
+        ptp->flags &= ~LAN865X_PTP_FLAG_ENABLED;
+    }
+}
+
+/* Remove PTP */
+void lan865x_ptp_remove(struct lan865x_adapter *adapter)
+{
+    lan865x_ptp_close(adapter);
+}
+```
+
+#### **Schritt 4: Integration in den Haupttreiber**
+
+Modifikationen in `lan865x.c`:
+
+```c
+/* Am Anfang der Datei */
+#include "lan865x_ptp.h"
+
+/* In lan865x_probe() nach der TSU-Konfiguration hinzufügen: */
+static int lan865x_probe(struct spi_device *spi)
+{
+    /* ... bestehender Code bis TSU-Konfiguration ... */
+    
+    ret = oa_tc6_write_register(priv->tc6, LAN865X_REG_MAC_TSU_TIMER_INCR,
+                                MAC_TSU_TIMER_INCR_COUNT_NANOSECONDS);
+    if (ret) {
+        dev_err(&spi->dev, "Failed to config TSU Timer Incr reg: %d\n", ret);
+        goto oa_tc6_exit;
+    }
+
+    /* PTP-Initialisierung hinzufügen */
+    ret = lan865x_ptp_init(priv);
+    if (ret) {
+        dev_err(&spi->dev, "Failed to initialize PTP: %d\n", ret);
+        goto oa_tc6_exit;
+    }
+    
+    /* ... restlicher bestehender Code ... */
+    
+    ret = register_netdev(netdev);
+    if (ret) {
+        dev_err(&spi->dev, "Register netdev failed (ret = %d)", ret);
+        goto oa_tc6_exit;
+    }
+    
+    /* PTP nach netdev-Registrierung aktivieren */
+    ret = lan865x_ptp_open(priv);
+    if (ret) {
+        dev_warn(&spi->dev, "PTP initialization failed: %d (continuing without PTP)\n", ret);
+        /* Non-fatal: Network funktioniert ohne PTP */
+    }
+
+    return 0;
+
+oa_tc6_exit:
+    /* PTP cleanup hinzufügen bei Fehlern */
+    lan865x_ptp_remove(priv);
+    oa_tc6_exit(priv->tc6);
+free_netdev:
+    free_netdev(priv->netdev);
+    return ret;
+}
+
+/* In lan865x_remove() hinzufügen: */
+static void lan865x_remove(struct spi_device *spi)
+{
+    struct lan865x_priv *priv = spi_get_drvdata(spi);
+
+    cancel_work_sync(&priv->multicast_work);
+    
+    /* PTP cleanup hinzufügen */
+    lan865x_ptp_close(priv);
+    
+    unregister_netdev(priv->netdev);
+    
+    lan865x_ptp_remove(priv);  /* Final cleanup */
+    
+    oa_tc6_exit(priv->tc6);
+    free_netdev(priv->netdev);
+}
+```
+
+#### **Schritt 5: Timestamping Integration (Zukunft)**
+
+Für vollständige PTP-Funktionalität müssen TX/RX-Timestamping-Hooks hinzugefügt werden:
+
+```c
+/* In TX-Path (lan865x_start_xmit() oder entsprechend): */
+static netdev_tx_t lan865x_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+{
+    struct lan865x_priv *priv = netdev_priv(netdev);
+    
+    /* PTP TX Timestamp Request */
+    if (priv->ptp.flags & LAN865X_PTP_FLAG_TX_TS_ENABLED) {
+        if (lan865x_ptp_is_ptp_frame(skb)) {
+            lan865x_ptp_tx_timestamp_enable(priv, skb);
+        }
+    }
+    
+    /* ... bestehender TX-Code ... */
+}
+
+/* In RX-Path (wo Frames empfangen werden): */
+static void lan865x_handle_rx_frame(struct lan865x_priv *priv, struct sk_buff *skb)
+{
+    /* PTP RX Timestamp Processing */
+    if (priv->ptp.flags & LAN865X_PTP_FLAG_RX_TS_ENABLED) {
+        if (lan865x_ptp_is_ptp_frame(skb)) {
+            lan865x_ptp_rx_timestamp_process(priv, skb);
+        }
+    }
+    
+    /* ... bestehender RX-Code ... */
+}
+```
+
+### 9.3. Build-System Integration
+
+#### **Makefile erweitern:**
+
+In `drivers/net/ethernet/microchip/lan865x/Makefile`:
+
+```makefile
+# SPDX-License-Identifier: GPL-2.0-only
+obj-$(CONFIG_LAN865X) += lan865x.o
+
+lan865x-objs := lan865x.o
+lan865x-$(CONFIG_PTP_1588_CLOCK) += lan865x_ptp.o
+```
+
+#### **Kconfig erweitern:**
+
+In `drivers/net/ethernet/microchip/Kconfig`:
+
+```kconfig
+config LAN865X
+    tristate "LAN865x support"
+    depends on SPI
+    select OA_TC6
+    select PHYLIB
+    help
+      Support for the Microchip LAN865x 10Base-T1S Ethernet controllers.
+      
+      This driver supports the LAN8650/LAN8651 family of T1S MAC-PHY 
+      controllers with integrated PTP timestamping capabilities.
+      
+      To compile this driver as a module, choose M here. The module
+      will be called lan865x.
+```
+
+### 9.4. Testing-Strategie
+
+#### **Unit Tests:**
+```bash
+# 1. Hardware-Erkennung
+dmesg | grep lan865x
+ls -la /dev/ptp*
+
+# 2. Basis PTP-Funktionen
+phc_ctl /dev/ptp1 get    # Clock lesen
+phc_ctl /dev/ptp1 set $(date +%s.%N)  # Clock setzen
+phc_ctl /dev/ptp1 adj 1000  # Frequency adjustment
+
+# 3. LinuxPTP Integration
+ptp4l -i eth1 -m -s     # Als Master
+ptp4l -i eth1 -m        # Als Slave
+```
+
+#### **Integration Tests:**
+```bash
+# Multi-Node PTP-Netzwerk
+# Node 1 (LAN743x Master):
+ptp4l -i eth0 -m -s -f master.conf
+
+# Node 2 (LAN865x Slave):  
+ptp4l -i eth1 -m -f slave.conf
+
+# Performance-Monitoring:
+while true; do
+    echo "$(date): $(pmc -u -b 0 'GET CURRENT_DATA_SET' | grep offset)"
+    sleep 1
+done
+```
+
+### 9.5. Troubleshooting-Checkliste
+
+#### **Häufige Probleme:**
+1. **Register-Zugriff fehlschlägt**: SPI-Timing, Power-Management
+2. **PTP Clock nicht registriert**: CONFIG_PTP_1588_CLOCK=y fehlt
+3. **Hoher Jitter**: SPI-Interrupt-Latenz, CPU-Load
+4. **Timestamp-Fehler**: Hardware-FIFO-Overflow, falsche Register-Map
+
+#### **Debug-Kommandos:**
+```bash
+# Kernel-Messages
+dmesg | grep -E "(lan865x|ptp|1588)"
+
+# PTP-Status
+cat /sys/class/ptp/ptp1/clock_name
+ethtool -T eth1
+
+# Register-Dumps (Development)
+echo 'module lan865x +p' > /sys/kernel/debug/dynamic_debug/control
+```
+
+### 9.6. Performance-Erwartungen
+
+#### **Realistische Ziele:**
+- **Genauigkeit**: ±1-5µs (SPI-Overhead vs. PCIe LAN743x ±100ns)
+- **Jitter**: <10µs (abhängig von SPI-Clock und System-Load)
+- **CPU-Overhead**: Minimal (Hardware-Timestamping)
+- **Sync-Zeit**: <30s (Standard PTP-Konvergenz)
+
+#### **Optimierungen:**
+- **SPI-Clock maximieren**: Reduziert Register-Access-Latency
+- **DMA-basierter SPI**: Verringert CPU-Interrupt-Load
+- **Real-time Kernel**: Verbessert Interrupt-Latency
+- **IRQ-Affinity**: Isoliert PTP-Processing auf dedizierte CPU
+
+---
 
 ### A. Register-Referenz LAN743x
 
