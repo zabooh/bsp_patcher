@@ -187,12 +187,18 @@ Delay  = ((t2 - t1) + (t4 - t3)) / 2
 
 ### 2.2. Message-Typen
 
-| Type | Beschreibung | Hardware-Relevanz |
-|------|--------------|-------------------|
-| Sync | Zeitreferenz vom Master | TX-Timestamping |
-| Follow_Up | Präziser Sync-Zeitstempel | - |
-| Delay_Req | Delay-Messung vom Slave | TX-Timestamping |
-| Delay_Resp | Delay-Antwort vom Master | RX-Timestamping |
+| Type | Beschreibung | Kategorie | Hardware-Relevanz |
+|------|--------------|-----------|-------------------|
+| **Sync** | Zeitreferenz vom Master | Event Message | **TX-Timestamping** (t1) |
+| **Follow_Up** | Präziser Sync-Zeitstempel | General Message | Software (transportiert t1) |
+| **Delay_Req** | Delay-Messung vom Slave | Event Message | **TX-Timestamping** (t3) |
+| **Delay_Resp** | Delay-Antwort vom Master | General Message | Software (transportiert t4) |
+| **Pdelay_Req** | P2P Delay-Messung | Event Message | **TX-Timestamping** |
+| **Pdelay_Resp** | P2P Delay-Antwort | Event Message | **RX/TX-Timestamping** |
+| **Announce** | BMCA-Information | General Message | Software |
+| **Signaling** | Protokoll-Verhandlung | General Message | Software |
+
+**Wichtig:** Nur **Event Messages** benötigen Hardware-Timestamping. **General Messages** transportieren bereits gemessene Timestamps im Payload.
 
 ---
 
@@ -223,9 +229,10 @@ Userspace Applications (ptp4l, phc2sys)
 
 #### 3.2.1. ptp_clock_info Struktur
 ```c
+/* Vereinfachte Darstellung - siehe include/linux/ptp_clock_kernel.h für vollständige aktuelle Definition */
 struct ptp_clock_info {
     struct module *owner;
-    char name[16];
+    char name[PTP_CLOCK_NAME_LEN];  /* 32 Zeichen (nicht 16!) */
     s32 max_adj;                    /* max frequency adjustment (ppb) */
     int n_alarm;                    /* number of alarms */
     int n_ext_ts;                   /* number of external timestamps */
@@ -233,8 +240,13 @@ struct ptp_clock_info {
     int n_pins;                     /* number of input/output pins */
     int pps;                        /* indicates whether the clock supports PPS */
     
+    /* Neuere Kernel haben zusätzliche Felder: */
+    u32 supported_perout_flags;     /* supported periodic output flags */
+    u32 supported_extts_flags;      /* supported external timestamp flags */
+    int n_per_lp;                   /* low period periodic outputs */
+    
     /* Function pointers for clock operations */
-    int (*adjfine)(struct ptp_clock_info *ptp, long scaled_ppm);
+    int (*adjfine)(struct ptp_clock_info *ptp, long scaled_ppm);  /* scaled_ppm! */
     int (*adjtime)(struct ptp_clock_info *ptp, s64 delta);
     int (*gettime64)(struct ptp_clock_info *ptp, struct timespec64 *ts);
     int (*settime64)(struct ptp_clock_info *ptp, const struct timespec64 *ts);
@@ -242,6 +254,8 @@ struct ptp_clock_info {
     int (*verify)(struct ptp_clock_info *ptp, unsigned int pin, enum ptp_pin_function func, unsigned int chan);
 };
 ```
+
+**Hinweis:** Diese Struktur entwickelt sich mit Kernel-Versionen weiter. Aktuelle Definition: `include/linux/ptp_clock_kernel.h`
 
 ### 3.3. Socket-basierte Timestamping
 
@@ -295,11 +309,21 @@ if (setsockopt(sockfd, SOL_SOCKET, SO_TIMESTAMPING,
 
 ##### **PTP-Protokoll-Engine:**
 ```bash
-ptp4l -i eth0 -m -s    # Master-Modus
-ptp4l -i eth0 -m       # Slave-Modus (Auto-Erkennung)
+# Standard: BMCA entscheidet automatisch Master/Slave-Rolle
+ptp4l -i eth0 -m -f default.conf
+
+# Follower/Client-Only erzwingen (nie Master werden)  
+ptp4l -i eth0 -m -f client.conf   # mit "clientOnly 1" in config
 ```
 
-- **Best Master Clock Algorithm (BMCA)**: Automatische Master/Slave-Wahl
+**Konfiguration client.conf:**
+```ini
+[global]
+clientOnly 1              # Niemals Master werden
+dataset_comparison ieee1588
+```
+
+- **Best Master Clock Algorithm (BMCA)**: Automatische Master/Slave-Wahl (außer bei `clientOnly`)
 - **Message-Handling**: Sync, Delay_Req, Announce, Follow_Up
 - **Clock-Servo**: PI-Controller für Zeitsynchronisation
 
@@ -400,13 +424,15 @@ Wenn PTP im LAN865x implementiert ist:
 # T1S Multi-Drop mit PLCA + PTP
 ptp4l -i eth1 -m -f lan865x_t1s.conf
 
-# Konfiguration für 10BASE-T1S
+# **HYPOTHETISCHE** Konfiguration für 10BASE-T1S (noch nicht implementiert!)
 [eth1]
 network_transport     UDPv4
 time_stamping        hardware  
-plca_enabled         1         # PLCA-spezifisch
-plca_node_count      8         # Max 8 Nodes
-plca_node_id         0         # Master = Node 0
+# PLCA-spezifische Optionen (ZUKUNFTS-ERWEITERUNG):
+# plca_enabled         1         # Noch nicht in linuxptp verfügbar
+# plca_node_count      8         # Konzeptionell: Max 8 Nodes 
+# plca_node_id         0         # Konzeptionell: Master = Node 0
+```
 ```
 
 ### 4.6. ptp4l vs. andere PTP-Tools
@@ -474,12 +500,23 @@ pmc -u -b 0 'GET CURRENT_DATA_SET'
 
 ### 5.2. Timestamping-Modi
 
+PTP unterstützt verschiedene Modi entlang **zwei orthogonaler Dimensionen**:
+
+**A) Timestamp-Transport-Mechanismus:**
+
 | Modus | Beschreibung | Use Case |
 |-------|--------------|----------|
-| **One-Step** | Timestamp direkt ins Paket | Geringste Latenz |
-| **Two-Step** | Timestamp in Follow-Up | Flexibilität |
-| **P2P** | Peer-to-Peer Delay | Switched Networks |
-| **E2E** | End-to-End Delay | Routed Networks |
+| **One-Step** | Timestamp direkt in Sync-Message eingebettet | Geringste Latenz, Hardware-intensiv |
+| **Two-Step** | Timestamp in separater Follow-Up-Message | Flexibilität, Software-freundlich |
+
+**B) Path-Delay-Messmechanismus:**
+
+| Modus | Beschreibung | Use Case |
+|-------|--------------|----------|
+| **E2E (End-to-End)** | Delay_Req/Delay_Resp zwischen Master/Slave | Point-to-Point, einfache Topologien |
+| **P2P (Peer-to-Peer)** | Pdelay_* zwischen direkten Nachbarn | Switched Networks, komplexe Topologien |
+
+**Kombinationen möglich:** One-Step-E2E, Two-Step-P2P, etc.
 
 ---
 
@@ -1119,6 +1156,9 @@ ethtool -T eth0
 #     software-system-clock (SOF_TIMESTAMPING_SOFTWARE)
 #     hardware-raw-clock    (SOF_TIMESTAMPING_RAW_HARDWARE)
 # PTP Hardware Clock: 0
+
+**⚠️ KRITISCH für PTP-Discoverability:** Ohne korrekte `ethtool_get_ts_info` Implementierung im Treiber erkennen LinuxPTP-Tools die Hardware-Fähigkeiten nicht! `phc_ctl` und `ptp4l` benötigen diese Information zur automatischen PHC-Erkennung.
+
 # Hardware Transmit Timestamp Modes:
 #     off                   (HWTSTAMP_TX_OFF)
 #     on                    (HWTSTAMP_TX_ON)
@@ -1238,7 +1278,8 @@ ip addr add 192.168.1.100/24 dev eth0
 ethtool -s eth0 speed 1000 duplex full autoneg off
 
 # PTP Master starten mit Industrial Profile
-ptp4l -i eth0 -m -s -f industrial.conf &
+# Master-Konfiguration (BMCA wird entscheiden oder forced via config)
+ptp4l -i eth0 -m -f master.conf &
 PTP_PID=$!
 
 # PHC zu System Clock synchronisieren
@@ -1423,7 +1464,8 @@ LOG_FILE="ptp_test_$(date +%Y%m%d_%H%M%S).log"
 echo "Starting PTP Performance Test - Duration: ${TEST_DURATION}s" | tee $LOG_FILE
 
 # Start PTP services
-ptp4l -i eth0 -m -s &
+# Standard PTP (BMCA entscheidet)
+ptp4l -i eth0 -m &
 PTP_PID=$!
 sleep 5
 
@@ -1498,7 +1540,7 @@ ret = oa_tc6_write_register(priv->tc6, LAN865X_REG_MAC_TSU_TIMER_INCR,
 
 **Schlüssel-Evidenz:**
 - ✅ **"time stamping"** → PTP-Timestamping explizit erwähnt!
-- ✅ **"end of Start of Frame Delimiter (SFD)"** → Hardware-Timestamping am Wire!
+- ✅ **"Frame-Marker-Referenz"** → Hardware-Timestamping am definierten PHY/MAC-Bezugspunkt (SOF/SFD-Ende gemäß TSU-Dokumentation)!
 - ✅ **"40 ns"** → PTP-Clock-Auflösung (0x0028 = 40 Nanosekunden)!
 - ✅ **"25 MHz internal clock"** → 1/40ns = 25MHz PTP-Referenz-Takt!
 - ✅ **"AN1760"** → Microchip Application Note explizit über PTP-Timing!
@@ -1926,29 +1968,34 @@ static int lan865x_ptp_wait_cmd_complete(struct lan865x_adapter *adapter, u32 cm
 static int lan865x_ptp_adjfine(struct ptp_clock_info *ptp_info, long scaled_ppm)
 {
     struct lan865x_ptp *ptp = container_of(ptp_info, struct lan865x_ptp, ptp_clock_info);
-    struct lan865x_adapter *adapter = container_of(ptp, struct lan865x_adapter, ptp);
+    struct lan865x_priv *priv = container_of(ptp, struct lan865x_priv, ptp);  /* Korrigiert */
     u32 adj_val = 0;
+    s64 ppb_conversion;
     u64 adj_abs;
     bool negative;
     int ret;
     
-    if (scaled_ppm > LAN865X_PTP_MAX_ADJ_PPB || scaled_ppm < -LAN865X_PTP_MAX_ADJ_PPB)
+    /* KORREKT: scaled_ppm hat 16-bit fractional field
+     * Umrechnung scaled_ppm -> ppb: scaled_ppm * 1000 / (2^16) = ppb */
+    ppb_conversion = div_s64((s64)scaled_ppm * 1000, 65536);
+    
+    if (ppb_conversion > LAN865X_PTP_MAX_ADJ_PPB || ppb_conversion < -LAN865X_PTP_MAX_ADJ_PPB)
         return -ERANGE;
     
-    negative = scaled_ppm < 0;
-    adj_abs = negative ? -scaled_ppm : scaled_ppm;
+    negative = ppb_conversion < 0;
+    adj_abs = negative ? -ppb_conversion : ppb_conversion;
     
-    /* Convert scaled_ppm to hardware register value
-     * Hardware expects: (2^32 * adj_ppm) / 1e9
-     * For 25MHz base clock: adj_val = (adj_abs * 2^32) / 25e6
+    /* Convert ppb to hardware register value
+     * Hardware TSU: 25MHz base clock
+     * Register value berechnung basierend auf TSU-Spezifikation
      */
-    adj_val = (u32)div_u64(adj_abs * (1ULL << 32), 25000000ULL);
+    adj_val = (u32)div_u64(adj_abs * (1ULL << 32), 25000000000ULL);  /* 25e9 für ppb */
     
     if (negative)
         adj_val |= LAN865X_PTP_RATE_ADJ_DIR;
     
     mutex_lock(&ptp->cmd_lock);
-    ret = oa_tc6_write_register(adapter->tc6, LAN865X_REG_PTP_RATE_ADJ, adj_val);
+    ret = oa_tc6_write_register(priv->tc6, LAN865X_REG_PTP_RATE_ADJ, adj_val);
     mutex_unlock(&ptp->cmd_lock);
     
     return ret;
@@ -2314,7 +2361,7 @@ ptp4l -i eth1 -m        # Als Slave
 ```bash
 # Multi-Node PTP-Netzwerk
 # Node 1 (LAN743x Master):
-ptp4l -i eth0 -m -s -f master.conf
+ptp4l -i eth0 -m -f master.conf  # BMCA oder forced Master
 
 # Node 2 (LAN865x Slave):  
 ptp4l -i eth1 -m -f slave.conf
