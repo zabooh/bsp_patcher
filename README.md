@@ -297,7 +297,22 @@ The update script provides an automated way to update the rootfs on the target d
 
 The update script will prompt for network configuration to establish TFTP communication:
 
-#### Step 1: Local IP Address Configuration
+#### Step 1: Network Interface Selection
+```
+Use interface (default: eth1):
+```
+
+**What to enter:**
+- **eth1** (default) - The Ethernet port next to the USB connector (recommended for management/update)
+- **eth0** - LAN8651 T1S PHY interface (typically used for AIoT network)
+- **eth2** - Additional Ethernet interface (if available)
+
+**Why eth1 is the default:**
+- The Ethernet port next to USB is typically mapped to eth1
+- This port is commonly used for management and firmware updates
+- Provides reliable connection for TFTP operations
+
+#### Step 2: Local IP Address Configuration
 ```
 Enter local IP address with netmask (e.g., 169.254.35.110/16):
 ```
@@ -308,12 +323,12 @@ Enter local IP address with netmask (e.g., 169.254.35.110/16):
 - Alternative: `192.168.1.100/24`
 
 **Why this is needed:**
-- Configures the embedded device's network interface (eth0)
+- Configures the selected network interface (eth1 by default)
 - Must be in same subnet as TFTP server for communication
-- `/16` netmask = `255.255.0.0` (allows 169.254.x.x range)
-- `/24` netmask = `255.255.255.0` (allows 192.168.1.x range)
+- Target address for downloading `brsdk_standalone_arm.ext4.gz`
+- Must be reachable from the TFTP server configured in Step 3
 
-#### Step 2: TFTP Server IP Address
+#### Step 3: TFTP Server IP Address
 ```
 Enter TFTP server IP address (e.g., 169.254.87.46):
 ```
@@ -324,33 +339,40 @@ Enter TFTP server IP address (e.g., 169.254.87.46):
 - Alternative: `192.168.1.10`
 
 **Why this is needed:**
-- Target address for downloading `brsdk_standalone_arm.ext4.gz`
-- Must be reachable from the local IP configured in Step 1
+- IP address of your development machine running TFTP server
+- Must be reachable from the local IP configured in Step 2
 - TFTP server must be running and serving the image file
+
+**Network Subnet Notes:**
+- `/16` netmask = `255.255.0.0` (allows 169.254.x.x range)
+- `/24` netmask = `255.255.255.0` (allows 192.168.1.x range)
 
 #### Network Configuration Examples
 
-**Link-Local Setup (Recommended for direct connection):**
+**Link-Local Setup (Recommended for direct connection via eth1):**
 ```
+Interface:    eth1 (default)
 Local IP:     169.254.35.123/16
 TFTP Server:  169.254.87.46
 Network:      Direct Ethernet cable between devices
 ```
 
-**LAN Setup (Development network):**
+**LAN Setup (Development network via eth1):**
 ```
+Interface:    eth1 (default)
 Local IP:     192.168.1.100/24  
 TFTP Server:  192.168.1.10
 Network:      Both devices on same LAN/switch
 ```
 
 1. **Data Partition Setup**: Script formats `/dev/mmcblk0p7` as ext4 and mounts to `/data`
-2. **Network Configuration**: Enter IP addresses as described above
-3. **TFTP Download**: Script executes `tftp -b 50000 -g -r brsdk_standalone_arm.ext4.gz [SERVER_IP]`
-4. **Image Extraction**: Decompresses `.gz` file to `.ext4` format
-5. **Slot Detection**: Automatically detects active/inactive boot partitions (`mmcblk0p5` ↔ `mmcblk0p6`)
-6. **Image Installation**: Writes new rootfs to inactive partition using `dd`
-7. **Boot Configuration**: Updates U-Boot environment (`mmc_cur/mmc_bak`) for automatic failover
+2. **Interface Selection**: Choose network interface (default: eth1 - management port)
+3. **Network Configuration**: Enter IP addresses as described above
+4. **TFTP Download**: Script executes `tftp -b 50000 -g -r brsdk_standalone_arm.ext4.gz [SERVER_IP]`
+5. **Image Extraction**: Decompresses `.gz` file to `.ext4` format
+6. **Slot Detection**: Automatically detects active/inactive boot partitions (`mmcblk0p5` ↔ `mmcblk0p6`)
+7. **Image Installation**: Writes new rootfs to inactive partition using `dd`
+8. **Boot Configuration**: Updates U-Boot environment (`mmc_cur/mmc_bak`) for automatic failover
 
 **Prerequisites:**
 - TFTP server running with `brsdk_standalone_arm.ext4.gz` image
