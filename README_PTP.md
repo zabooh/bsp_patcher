@@ -1354,6 +1354,175 @@ if (ret) {
 
 **Fazit**: Die **Hardware ist PTP-ready** - nur die **Software-Schicht muss ergänzt** werden!
 
+#### **🔗 LAN865x PTP im Kontext von PLCA (Physical Layer Collision Avoidance)**
+
+Der LAN865x als **10BASE-T1S MAC-PHY** unterstützt **PLCA**, was die PTP-Implementierung besonders wertvoll macht:
+
+##### **PLCA + PTP Synergie-Effekte:**
+
+```
+10BASE-T1S Multi-Drop Topology mit PLCA:
+┌─────────────────────────────────────────────────────────────┐
+│                Single Pair Ethernet Bus                     │
+│  Node 1      Node 2      Node 3      Node 4      Node 5    │
+│ (Master)    (Slave)     (Slave)     (Slave)     (Slave)    │
+│    │          │           │           │           │        │
+│ LAN865x   LAN865x     LAN865x     LAN865x     LAN865x      │
+│ PTP+PLCA  PTP+PLCA   PTP+PLCA   PTP+PLCA   PTP+PLCA       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+##### **1. Deterministische Latenz durch PLCA**
+
+**PLCA-Mechanismus:**
+- **Token-basiert**: Jeder Node erhält deterministischen Sendezugriff
+- **Bekannte Zykluszeit**: Vorhersagbare Frame-Delays
+- **Collision-frei**: Keine zufälligen Backoff-Zeiten
+
+**PTP-Vorteil:**
+```c
+// Ohne PLCA (CSMA/CD): Variable Delays
+Frame_Delay = Medium_Access_Time + Collision_Backoff + Transmission_Time
+//            ↑ 0-51.2µs random  ↑ 0-∞ exponential
+
+// Mit PLCA: Deterministische Delays  
+Frame_Delay = PLCA_Cycle_Position × Beacon_Timer + Transmission_Time
+//            ↑ vorhersagbar      ↑ konstant
+```
+
+**Resultat**: **Sub-Mikrosekunden PTP-Genauigkeit** auch in Multi-Node-Netzwerken!
+
+##### **2. PLCA-Aware PTP-Implementierung**
+
+Der LAN865x könnte **PLCA-optimierte PTP-Features** bieten:
+
+```c
+/* Hypothetische PLCA-PTP Register-Erweiterungen */
+#define LAN865X_REG_PLCA_PTP_CONFIG        0x00010080
+#define LAN865X_REG_PLCA_BEACON_SYNC       0x00010081  
+#define LAN865X_REG_PLCA_TIMESTAMP_OFFSET  0x00010082
+
+/* PLCA-spezifische PTP-Konfiguration */
+#define PLCA_PTP_BEACON_SYNC_EN     BIT(0)  // Sync to PLCA Beacon
+#define PLCA_PTP_COMP_DELAYS        BIT(1)  // Compensate PLCA Delays  
+#define PLCA_PTP_NODE_PRIORITY      GENMASK(7,4) // PTP Priority per Node
+```
+
+##### **3. Industrial Automation Use Case**
+
+**Typische Anwendung**: Industrie 4.0 Sensor-Netzwerk
+```
+Factory Floor 10BASE-T1S + PLCA + PTP:
+
+PLC/Master ──┬── Sensor Node 1 (Temperatur)    
+             ├── Sensor Node 2 (Vibration)     
+             ├── Sensor Node 3 (Druck)         
+             ├── Actuator Node 4 (Ventil)      
+             └── HMI Node 5 (Display)          
+
+• PLCA: Garantierte 1ms Zykluszeit
+• PTP:  Nanosekunden-synchrone Samples
+• LAN865x: Hardware-Timestamping für alle Nodes
+```
+
+**Vorteile der Kombination:**
+- ⚡ **Echtzeit-fähig**: PLCA + PTP = deterministische Kommunikation
+- 🎯 **Präzise Synchronisation**: Hardware-Timestamps trotz Multi-Drop
+- 💡 **Energie-effizient**: Single-Pair-Verkabelung
+- 🔧 **Skalierbar**: Bis zu 8 Nodes pro Segment
+
+##### **4. PLCA-Timestamp-Kompensation**
+
+**Challenge**: PLCA fügt deterministische, aber **node-spezifische Delays** hinzu:
+
+```c
+/* PLCA-Delay-Berechnung für PTP-Timestamps */
+static u32 lan865x_plca_delay_compensation(struct lan865x_adapter *adapter, 
+                                          u8 node_id, u32 beacon_period)
+{
+    /* Node-Position im PLCA-Zyklus */
+    u32 plca_slot_delay = node_id * beacon_period / max_nodes;
+    
+    /* Medium-Propagation (Single-Pair-Cable) */  
+    u32 cable_delay = adapter->cable_length_m * 5; // ~5ns/m für Copper
+    
+    /* PLCA-Protocol-Overhead */
+    u32 plca_overhead = 2400; // 24 Bit @ 10 Mbps = 2.4µs
+    
+    return plca_slot_delay + cable_delay + plca_overhead;
+}
+
+/* PTP-Timestamp mit PLCA-Compensation */
+static void lan865x_ptp_rx_timestamp_plca(struct lan865x_adapter *adapter,
+                                          struct sk_buff *skb)  
+{
+    u32 hw_timestamp_ns;
+    u32 plca_compensation;
+    ktime_t corrected_timestamp;
+    
+    /* Hardware-Timestamp lesen */
+    hw_timestamp_ns = lan865x_read_rx_timestamp(adapter);
+    
+    /* PLCA-Delay kompensieren */
+    plca_compensation = lan865x_plca_delay_compensation(adapter, 
+                                                       adapter->plca_node_id,
+                                                       adapter->plca_beacon_timer);
+    
+    /* Korrigierter Timestamp */
+    corrected_timestamp = ns_to_ktime(hw_timestamp_ns - plca_compensation);
+    
+    /* SKB-Timestamp setzen */
+    skb_hwtstamps(skb)->hwtstamp = corrected_timestamp;
+}
+```
+
+##### **5. Multi-Master PLCA-PTP-Topology** 
+
+**Advanced Use Case**: Redundante Master mit PLCA:
+
+```
+Redundant PTP Masters in PLCA Network:
+
+Primary Master ──┬── Node 1 ── Node 2 ── Node 3 ──┐
+                 │                                 │
+Backup Master ───┴─────────────────────────────────┘
+
+• PLCA: Beide Master haben Sendeslots
+• PTP:  Best-Master-Clock-Algorithm (BMCA) 
+• Failover: <1 PLCA-Cycle (typ. <1ms)
+```
+
+**Implementation:**
+```c
+/* PLCA-aware BMCA */
+static int lan865x_ptp_plca_bmca(struct lan865x_adapter *adapter)
+{
+    if (adapter->plca_node_id == 0) {
+        /* Node 0 = Primary Master Slot */
+        return PTP_MASTER_PRIORITY_1;
+    } else if (adapter->plca_node_id == 1) {
+        /* Node 1 = Backup Master Slot */  
+        return PTP_MASTER_PRIORITY_2;
+    } else {
+        /* Slave Nodes */
+        return PTP_SLAVE_ONLY;
+    }
+}
+```
+
+##### **6. Performance-Expectations: PLCA + PTP**
+
+| Metrik | Standard Ethernet | 10BASE-T1S + PLCA + PTP |
+|--------|------------------|--------------------------|
+| **Jitter** | ±10-100µs | ±100-500ns |  
+| **Latency** | Variable | Deterministic |
+| **Sync-Time** | 30-60s | 5-15s |
+| **Topology** | Point-to-Point | Multi-Drop (8 Nodes) |
+| **Cable** | 4-Pair | Single-Pair |
+| **Power** | Standard PoE | PoDL (Power-over-DataLine) |
+
+**Fazit**: **PLCA + PTP auf LAN865x** ermöglicht **industrielle Echtzeit-Synchronisation** mit **Single-Pair-Ethernet** - ideal für Industrie 4.0, Automotive und IoT-Anwendungen!
+
 Basierend auf dieser bestehenden Hardware-Infrastruktur und den bereits vorhandenen TSU-Hardware-Hints, hier eine konkrete Strategie zur Implementierung von Hardware PTP-Support:
 
 ### 9.1. Phasenplan
