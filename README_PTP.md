@@ -43,46 +43,46 @@ Eine ausführliche Anleitung zum Verständnis der Hardware PTP (Precision Time P
      - 6.2.3. [Aber: PCIe beeinflusst indirekt die Performance](#aber-pcie-beeinflusst-indirekt-die-performance)
      - 6.2.4. [Vergleich: Embedded vs. PCIe PTP-Controller](#vergleich-embedded-vs-pcie-ptp-controller)
      - 6.2.5. [Zusammenfassung: PCIe vs. PTP Performance](#zusammenfassung-pcie-vs-ptp-performance)
-   - 6.3. [Treiber-Struktur Übersicht](#treiber-struktur-übersicht)
-   - 6.4. [LAN865x T1S PTP-Implementierung (Zukünftig)](#lan865x-t1s-ptp-implementierung-zukünftig)
-     - 6.4.1. [MAC-PHY vs. separater PHY: Wo gehört PTP hin?](#mac-phy-vs-separater-phy-wo-gehört-ptp-hin)
-     - 6.4.2. [Aktuelle Hardware-Evidenz im LAN865x Treiber](#aktuelle-hardware-evidenz-im-lan865x-treiber)
-     - 6.4.3. [Architektur-Entscheidung: MAC vs. PHY-Treiber](#architektur-entscheidung-mac-vs-phy-treiber)
-     - 6.4.4. [Vorgeschlagene LAN865x PTP-Implementierung](#vorgeschlagene-lan865x-ptp-implementierung)
-     - 6.4.5. [Herausforderungen bei SPI-basierten PTP](#herausforderungen-bei-spi-basierten-ptp)
-     - 6.4.6. [Nächste Schritte für LAN865x PTP](#nächste-schritte-für-lan865x-ptp)
+   - 6.3. [LAN865x T1S PTP-Implementierung (Zukünftig)](#lan865x-t1s-ptp-implementierung-zukünftig)
+     - 6.3.1. [MAC-PHY vs. separater PHY: Wo gehört PTP hin?](#mac-phy-vs-separater-phy-wo-gehört-ptp-hin)
+     - 6.3.2. [Aktuelle Hardware-Evidenz im LAN865x Treiber](#aktuelle-hardware-evidenz-im-lan865x-treiber)
+     - 6.3.3. [Architektur-Entscheidung: MAC vs. PHY-Treiber](#architektur-entscheidung-mac-vs-phy-treiber)
+     - 6.3.4. [Vorgeschlagene LAN865x PTP-Implementierung](#vorgeschlagene-lan865x-ptp-implementierung)
+     - 6.3.5. [Herausforderungen bei SPI-basierten PTP](#herausforderungen-bei-spi-basierten-ptp)
+     - 6.3.6. [Nächste Schritte für LAN865x PTP](#nächste-schritte-für-lan865x-ptp)
+   - 6.4. [Treiber-Struktur Übersicht](#treiber-struktur-übersicht)
 
 7. [Code-Beispiele und Analyse](#code-beispiele-und-analyse)
-   - 7.1. [PTP Clock Registration](#1-ptp-clock-registration)
-   - 7.2. [Frequency Adjustment (adjfine)](#2-frequency-adjustment-adjfine)
-   - 7.3. [Time Adjustment (adjtime)](#3-time-adjustment-adjtime)
-   - 7.4. [TX Timestamp Handling](#4-tx-timestamp-handling)
-   - 7.5. [GPIO und Event Channel Management](#5-gpio-und-event-channel-management)
-   - 7.6. [Periodic Output (PPS) Generation](#6-periodic-output-pps-generation)
+   - 7.1. [PTP Clock Registration](#ptp-clock-registration)
+   - 7.2. [Frequency Adjustment (adjfine)](#frequency-adjustment-adjfine)
+   - 7.3. [Time Adjustment (adjtime)](#time-adjustment-adjtime)
+   - 7.4. [TX Timestamp Handling](#tx-timestamp-handling)
+   - 7.5. [GPIO und Event Channel Management](#gpio-und-event-channel-management)
+   - 7.6. [Periodic Output (PPS) Generation](#periodic-output-pps-generation)
 
 8. [Konfiguration und Verwendung](#konfiguration-und-verwendung)
-   - 8.1. [Kernel-Konfiguration](#1-kernel-konfiguration)
-   - 8.2. [Hardware-Erkennung](#2-hardware-erkennung)
-   - 8.3. [LinuxPTP Konfiguration](#3-linuxptp-konfiguration)
+   - 8.1. [Kernel-Konfiguration](#kernel-konfiguration)
+   - 8.2. [Hardware-Erkennung](#hardware-erkennung)
+   - 8.3. [LinuxPTP Konfiguration](#linuxptp-konfiguration)
      - 8.3.1. [ptp4l.conf für LAN743x](#ptp4lconf-für-lan743x)
      - 8.3.2. [Starten der PTP Services](#starten-der-ptp-services)
-   - 8.4. [GPIO und Event Configuration](#4-gpio-und-event-configuration)
+   - 8.4. [GPIO und Event Configuration](#gpio-und-event-configuration)
      - 8.4.1. [PPS Output konfigurieren](#pps-output-konfigurieren)
      - 8.4.2. [External Timestamping](#external-timestamping)
-   - 8.5. [Real-world Deployment Beispiel](#5-real-world-deployment-beispiel)
+   - 8.5. [Real-world Deployment Beispiel](#real-world-deployment-beispiel)
      - 8.5.1. [Industrielle Automatisierung Setup](#industrielle-automatisierung-setup)
 
 9. [Debugging und Monitoring](#debugging-und-monitoring)
-   - 9.1. [Hardware-Status prüfen](#1-hardware-status-prüfen)
+   - 9.1. [Hardware-Status prüfen](#hardware-status-prüfen)
      - 9.1.1. [Register-Dumps (nur Debug-Builds)](#register-dumps-nur-debug-builds)
      - 9.1.2. [PHC Tools](#phc-tools)
-   - 9.2. [PTP Message Analysis](#2-ptp-message-analysis)
+   - 9.2. [PTP Message Analysis](#ptp-message-analysis)
      - 9.2.1. [tcpdump für PTP Traffic](#tcpdump-für-ptp-traffic)
      - 9.2.2. [Wireshark Analysis](#wireshark-analysis)
-   - 9.3. [Performance Monitoring](#3-performance-monitoring)
+   - 9.3. [Performance Monitoring](#performance-monitoring)
      - 9.3.1. [PTP Servo Statistics](#ptp-servo-statistics)
      - 9.3.2. [System Performance Impact](#system-performance-impact)
-   - 9.4. [Common Issues und Solutions](#4-common-issues-und-solutions)
+   - 9.4. [Common Issues und Solutions](#common-issues-und-solutions)
      - 9.4.1. [Problem: Hoher Jitter](#problem-hoher-jitter)
      - 9.4.2. [Problem: Timestamp Errors](#problem-timestamp-errors)
      - 9.4.3. [Problem: Clock Drift](#problem-clock-drift)
@@ -469,7 +469,7 @@ pmc -u -b 0 'GET CURRENT_DATA_SET'
 
 ### 5.1. Vergleich der Architekturen
 
-#### Software Timestamping
+#### 5.1.1. Software Timestamping
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
 │ Application │◄──►│ Linux Kernel │◄──►│ Network HW  │
@@ -484,7 +484,7 @@ pmc -u -b 0 'GET CURRENT_DATA_SET'
 ```
 **Genauigkeit**: ±1-10 µs | **Jitter**: Hoch | **CPU-Last**: Hoch
 
-#### Hardware Timestamping
+#### 5.1.2. Hardware Timestamping
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐
 │ Application │◄──►│ Linux Kernel │◄──►│ PTP-capable HW  │
@@ -615,9 +615,9 @@ PTP Sync Message:
 
 ---
 
-### 6.4. LAN865x T1S PTP-Implementierung (Zukünftig)
+### 6.3. LAN865x T1S PTP-Implementierung (Zukünftig)
 
-#### 6.4.1. MAC-PHY vs. separater PHY: Wo gehört PTP hin?
+#### 6.3.1. MAC-PHY vs. separater PHY: Wo gehört PTP hin?
 
 Der **LAN865x (LAN8650/8651)** ist ein **10BASE-T1S MAC-PHY-Controller** mit **integrierter PTP-Hardware**, aber noch **ohne Treiber-Unterstützung**. Die Architektur unterscheidet sich bedeutend vom LAN743x:
 
@@ -635,7 +635,7 @@ LAN865x (T1S MAC-PHY):
 │                     └────► PTP Engine (wo genau?)
 ```
 
-### 6.4.2. Aktuelle Hardware-Evidenz im LAN865x Treiber
+### 6.3.2. Aktuelle Hardware-Evidenz im LAN865x Treiber
 
 Bereits im bestehenden Code finden sich **PTP-Hardware-Hinweise**:
 
@@ -659,7 +659,7 @@ ret = oa_tc6_write_register(priv->tc6, LAN865X_REG_MAC_TSU_TIMER_INCR,
 - **SFD Timestamping** = Hardware-Timestamping am Wire
 - **25 MHz Clock** = PTP-Referenz-Takt (40ns Auflösung)
 
-### 6.4.3. Architektur-Entscheidung: MAC vs. PHY-Treiber
+### 6.3.3. Architektur-Entscheidung: MAC vs. PHY-Treiber
 
 Für den **LAN865x** sollte PTP im **MAC-Treiber** implementiert werden:
 
@@ -678,7 +678,7 @@ Für den **LAN865x** sollte PTP im **MAC-Treiber** implementiert werden:
 3. **Register-Zugriff**: PTP-Register sind nicht über MDIO erreichbar
 4. **10BASE-T1S Spezialfall**: Integrierter Controller, nicht separater PHY
 
-### 6.4.4. Vorgeschlagene LAN865x PTP-Implementierung
+### 6.3.4. Vorgeschlagene LAN865x PTP-Implementierung
 
 #### **Struktur-Erweiterung:**
 ```c
@@ -748,7 +748,7 @@ static int lan865x_probe(struct spi_device *spi)
 }
 ```
 
-### 6.4.5. Herausforderungen bei SPI-basierten PTP
+### 6.3.5. Herausforderungen bei SPI-basierten PTP
 
 Im Gegensatz zum **PCIe LAN743x** hat der **SPI LAN865x** zusätzliche Latency-Quellen:
 
@@ -761,7 +761,7 @@ Im Gegensatz zum **PCIe LAN743x** hat der **SPI LAN865x** zusätzliche Latency-Q
 
 **Aber**: Die **PTP-Genauigkeit bleibt unberührt**, da Hardware-Timestamping am SFD erfolgt!
 
-### 6.4.6. Nächste Schritte für LAN865x PTP
+### 6.3.6. Nächste Schritte für LAN865x PTP
 
 1. **Hardware-Dokumentation**: Microchip LAN865x Register-Map für PTP-Register
 2. **Treiber-Erweiterung**: PTP-Framework-Integration in `lan865x.c`
@@ -769,7 +769,7 @@ Im Gegensatz zum **PCIe LAN743x** hat der **SPI LAN865x** zusätzliche Latency-Q
 4. **Timestamping**: TX/RX Timestamp-Handling über OA-TC6
 5. **Testing**: Verification gegen Hardware mit bekanntem PTP-Master
 
-### 6.3. Treiber-Struktur Übersicht
+### 6.4. Treiber-Struktur Übersicht
 
 ```c
 struct lan743x_ptp {
