@@ -512,6 +512,185 @@ ethtool --get-plca-cfg eth0
 cat /sys/class/net/eth0/carrier
 ```
 
+## Call Tree - Funktionsaufrufe zwischen den Drei Komponenten
+
+### 1. Initialisierung-Call-Chain
+
+#### Kernel Module Loading:
+```
+module_spi_driver(lan865x_driver)
+└── lan865x_probe()                    // lan865x.c
+    ├── alloc_etherdev()               // Linux Network Subsystem  
+    ├── oa_tc6_init()                  // oa_tc6.c
+    │   ├── oa_tc6_sw_reset_macphy()   // oa_tc6.c internal
+    │   ├── oa_tc6_mdiobus_register()  // oa_tc6.c internal
+    │   └── oa_tc6_phy_init()          // oa_tc6.c internal
+    │       └── phy_connect_direct()   // Linux PHY-Subsystem
+    │           └── microchip_t1s_driver matched by PHY_ID
+    ├── oa_tc6_write_register()        // oa_tc6.c → TSU Timer Config
+    ├── oa_tc6_zero_align_receive_frame_enable() // oa_tc6.c
+    ├── lan865x_set_hw_macaddr()       // lan865x.c internal
+    │   ├── lan865x_set_hw_macaddr_low_bytes() // lan865x.c internal
+    │   │   └── oa_tc6_write_register() // oa_tc6.c → MAC Register
+    │   └── oa_tc6_write_register()    // oa_tc6.c → MAC Register
+    └── register_netdev()              // Linux Network Subsystem
+```
+
+### 2. PHY-Treiber Call Tree (microchip_t1s.c)
+
+#### PHY Initialization:
+```
+Linux PHY-Subsystem
+└── .config_init callback
+    ├── lan865x_revb0_config_init()           // für LAN8651
+    │   ├── phy_write_mmd() [x28]             // Standard MDIO → MDIO Bridge
+    │   └── lan865x_setup_cfgparam()
+    │       ├── lan865x_generate_cfg_offsets()
+    │       │   └── lan865x_revb0_indirect_read()
+    │       │       ├── phy_write_mmd()       // → MDIO Bridge
+    │       │       └── phy_read_mmd()        // → MDIO Bridge
+    │       ├── lan865x_read_cfg_params()
+    │       │   └── phy_read_mmd() [x5]       // → MDIO Bridge 
+    │       └── lan865x_write_cfg_params()
+    │           └── phy_write_mmd() [x5]      // → MDIO Bridge
+    └── lan867x_revb1_config_init()           // für LAN8670/1/2
+        ├── phy_read_mmd()                    // → MDIO Bridge
+        └── phy_modify_mmd() [x12]            // → MDIO Bridge
+```
+
+#### PHY Register Access (Spezial für LAN8651):
+```
+Linux PHY-Subsystem
+├── .read_mmd = lan865x_phy_read_mmd()       // microchip_t1s.c
+│   └── __mdiobus_c45_read()                 // Linux MDIO → MDIO Bridge
+└── .write_mmd = lan865x_phy_write_mmd()     // microchip_t1s.c  
+    └── __mdiobus_c45_write()                // Linux MDIO → MDIO Bridge
+```
+
+### 3. OA TC6 Framework Call Tree (oa_tc6.c)
+
+#### MDIO-to-SPI Bridge:
+```
+Linux MDIO Subsystem (von PHY-Treiber)
+├── oa_tc6_mdiobus_read()                    // oa_tc6.c
+│   └── oa_tc6_read_register()               // oa_tc6.c
+├── oa_tc6_mdiobus_write()                   // oa_tc6.c  
+│   └── oa_tc6_write_register()              // oa_tc6.c
+├── oa_tc6_mdiobus_read_c45()                // oa_tc6.c
+│   └── oa_tc6_read_register()               // oa_tc6.c
+└── oa_tc6_mdiobus_write_c45()               // oa_tc6.c
+    └── oa_tc6_write_register()              // oa_tc6.c
+```
+
+#### Register Access Chain:
+```
+oa_tc6_read_register()                       // oa_tc6.c - Public API
+└── oa_tc6_read_registers()                  // oa_tc6.c - Internal
+    └── oa_tc6_perform_ctrl_spi_transfer()   // oa_tc6.c - Internal
+        └── spi_sync()                       // Linux SPI Subsystem
+
+oa_tc6_write_register()                      // oa_tc6.c - Public API  
+└── oa_tc6_write_registers()                 // oa_tc6.c - Internal
+    └── oa_tc6_perform_ctrl_spi_transfer()   // oa_tc6.c - Internal
+        └── spi_sync()                       // Linux SPI Subsystem  
+```
+
+### 4. MAC-PHY Treiber Call Tree (lan865x.c)
+
+#### Network Interface Operations:
+```
+Linux Network Subsystem
+├── .ndo_open = lan865x_net_open()
+│   ├── lan865x_hw_enable()                  // lan865x.c
+│   │   ├── oa_tc6_read_register()           // oa_tc6.c
+│   │   └── oa_tc6_write_register()          // oa_tc6.c
+│   ├── phy_start()                          // Linux PHY Subsystem
+│   └── netif_start_queue()                  // Linux Network Subsystem
+├── .ndo_stop = lan865x_net_close()
+│   ├── netif_stop_queue()                   // Linux Network Subsystem
+│   ├── phy_stop()                           // Linux PHY Subsystem  
+│   └── lan865x_hw_disable()                 // lan865x.c
+│       ├── oa_tc6_read_register()           // oa_tc6.c
+│       └── oa_tc6_write_register()          // oa_tc6.c
+├── .ndo_start_xmit = lan865x_send_packet()
+│   └── oa_tc6_start_xmit()                  // oa_tc6.c
+└── .ndo_set_rx_mode = lan865x_set_multicast_list()
+    └── schedule_work(&priv->multicast_work)
+        └── lan865x_multicast_work_handler() // lan865x.c
+            ├── lan865x_set_all_multicast_addr()    // lan865x.c
+            ├── lan865x_set_specific_multicast_addr() // lan865x.c  
+            ├── lan865x_clear_all_multicast_addr()   // lan865x.c
+            └── oa_tc6_write_register() [multiple]   // oa_tc6.c
+```
+
+#### MAC Address Management:
+```
+Linux Network Subsystem  
+└── .ndo_set_mac_address = lan865x_set_mac_address()  // lan865x.c
+    └── lan865x_set_hw_macaddr()                      // lan865x.c
+        ├── lan865x_set_hw_macaddr_low_bytes()        // lan865x.c
+        │   └── oa_tc6_write_register()               // oa_tc6.c
+        └── oa_tc6_write_register()                   // oa_tc6.c
+```
+
+### 5. Datenfluss Call Tree
+
+#### TX Path:
+```
+Network Stack
+└── sk_buff → lan865x_send_packet()          // lan865x.c (.ndo_start_xmit)
+             └── oa_tc6_start_xmit()          // oa_tc6.c
+                 └── oa_tc6_spi_thread()      // oa_tc6.c (Background Thread)
+                     └── spi_sync()           // Linux SPI → Hardware
+```
+
+#### RX Path:
+```
+Hardware SPI Interrupt
+└── oa_tc6_spi_thread()                      // oa_tc6.c (Background Thread)  
+    └── oa_tc6_try_spi_transfer()            // oa_tc6.c
+        └── oa_tc6_rx_handler()              // oa_tc6.c  
+            └── netif_rx()                   // Linux Network Stack
+```
+
+### 6. Kritische API-Schnittstellen
+
+#### Von lan865x.c → oa_tc6.c:
+```c
+// Hauptschnittstellen
+oa_tc6_init()                    // Initialisierung
+oa_tc6_exit()                    // Cleanup  
+oa_tc6_start_xmit()              // TX-Daten
+oa_tc6_read_register()           // Register lesen
+oa_tc6_write_register()          // Register schreiben
+oa_tc6_zero_align_receive_frame_enable() // Hardware-Konfiguration
+```
+
+#### Von oa_tc6.c → Linux Subsystems:
+```c  
+// SPI-Kommunikation
+spi_sync()                       // Synchrone SPI-Transfers
+
+// MDIO Bridge → PHY-Treiber  
+mii_bus callbacks:              
+.read = oa_tc6_mdiobus_read()    
+.write = oa_tc6_mdiobus_write()
+.read_c45 = oa_tc6_mdiobus_read_c45()
+.write_c45 = oa_tc6_mdiobus_write_c45()
+```
+
+#### Von microchip_t1s.c → Linux/OA TC6:
+```c
+// Standard PHY APIs (über MDIO Bridge)
+phy_read_mmd()
+phy_write_mmd()  
+phy_modify_mmd()
+
+// Speziell für LAN8651 (direkte C45-MDIO)
+.read_mmd = lan865x_phy_read_mmd()   // → __mdiobus_c45_read()
+.write_mmd = lan865x_phy_write_mmd() // → __mdiobus_c45_write()
+```
+
 ## Zusammenfassung
 
 Die **LAN8651 T1S MAC-PHY** Integration in Linux nutzt eine **elegante Drei-Schichten-Architektur**:
@@ -528,5 +707,11 @@ Die **LAN8651 T1S MAC-PHY** Integration in Linux nutzt eine **elegante Drei-Schi
 
 **Hardware:** Ein einziges **SPI-Interface** für alle Kommunikation  
 **Software:** Abstraktions-Layer ermöglichen Standard-Linux-Networking-API
+
+**Call Tree Erkenntnisse:**
+- **Zentrale Rolle des OA TC6 Frameworks** - Alle Hardware-Kommunikation läuft über oa_tc6.c
+- **Clevere MDIO-Bridge** - PHY-Treiber nutzen Standard-Linux-APIs, werden transparent zu SPI übersetzt
+- **Klare Trennung** - Jede Schicht hat eine definierte Verantwortlichkeit und API
+- **Threaded Architecture** - SPI-Kommunikation läuft in separatem Kernel-Thread (oa_tc6_spi_thread)
 
 Diese Architektur zeigt die **Kraft der Linux-Kernel-Abstraktion** - komplexe Hardware wird durch saubere API-Schichten für Anwendungen transparent gemacht.
